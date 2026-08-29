@@ -1,0 +1,23 @@
+{
+  "name": "gitxray",
+  "version": "1.0.0",
+  "description": "Git X-Ray — an X-ray machine for a codebase's history",
+  "main": "dist/gitxray.js",
+  "bin": {
+    "gitxray": "bin/gitxray.js"
+  },
+  "scripts": {
+    "build": "node build.js",
+    "prepare": "node build.js",
+    "start": "node src/index.js",
+    "test": "node --test tests/test.js"
+  },
+  "files": [
+    "src",
+    "dist",
+    "bin",
+    "build.js",
+    "README.md"
+  ],
+  "license": "MIT"
+}

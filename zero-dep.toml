@@ -10,7 +10,7 @@ pitch = "An X-ray machine for a codebase's history — reads the raw .git object
 
 language = "JavaScript"
 runtime = "Node.js"
-runtime_version = "24 LTS"  # update to match whatever you actually target/pin
+runtime_version = "22 LTS"
 
 bonus_challenges_attempted = ["single-file", "reproducible-build", "package-killer", "stdlib-log"]
 
