@@ -13,6 +13,7 @@ const {
   hashToPath,
   looseObjectExists,
   readLooseObject,
+  readObject,
   parseCommit,
   parseTree,
 } = require('../src/git/objects.js');
@@ -80,9 +81,9 @@ describe('objects', () => {
     assert.equal(result, null);
   });
 
-  it('readLooseObject should read a real object from this repo', () => {
+  it('readObject should read a real object from this repo (loose or packed)', () => {
     const head = resolveHead(GIT_DIR);
-    const obj = readLooseObject(GIT_DIR, head.hash);
+    const obj = readObject(GIT_DIR, head.hash);
     assert.notEqual(obj, null);
     assert.equal(obj.type, 'commit');
     assert.ok(obj.size > 0);
@@ -91,7 +92,7 @@ describe('objects', () => {
 
   it('parseCommit should parse a real commit', () => {
     const head = resolveHead(GIT_DIR);
-    const obj = readLooseObject(GIT_DIR, head.hash);
+    const obj = readObject(GIT_DIR, head.hash);
     const commit = parseCommit(head.hash, obj.body);
 
     assert.equal(commit.hash, head.hash);
@@ -107,7 +108,7 @@ describe('objects', () => {
 
   it('parseCommit should handle root commit (no parents)', () => {
     const head = resolveHead(GIT_DIR);
-    const obj = readLooseObject(GIT_DIR, head.hash);
+    const obj = readObject(GIT_DIR, head.hash);
     const commit = parseCommit(head.hash, obj.body);
 
     // Our test repo has only one commit, so it's a root commit
@@ -117,10 +118,10 @@ describe('objects', () => {
 
   it('parseTree should parse a real tree object', () => {
     const head = resolveHead(GIT_DIR);
-    const obj = readLooseObject(GIT_DIR, head.hash);
+    const obj = readObject(GIT_DIR, head.hash);
     const commit = parseCommit(head.hash, obj.body);
 
-    const treeObj = readLooseObject(GIT_DIR, commit.tree);
+    const treeObj = readObject(GIT_DIR, commit.tree);
     assert.notEqual(treeObj, null);
     assert.equal(treeObj.type, 'tree');
 

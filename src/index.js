@@ -49,8 +49,8 @@ function main() {
     if (packedCount > 0) {
       if (!options.json) {
         printWarning(
-          `${packedCount} object(s) are packed and not analyzed. ` +
-            'For complete results, analyze a repo before git gc, or run: git unpack-objects'
+          `${packedCount} object(s) could not be read and were skipped. ` +
+            'History may be incomplete.'
         );
       }
     }

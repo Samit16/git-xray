@@ -1,22 +1,23 @@
 'use strict';
 
-const { readLooseObject, parseCommit, parseTree } = require('./objects.js');
+const { readObject, parseCommit, parseTree } = require('./objects.js');
 
 /**
  * Walk the commit graph via BFS from one or more starting hashes.
  * Returns commits in reverse-chronological order (newest first).
  *
- * Skips packed objects gracefully and tracks how many were skipped.
+ * Uses readObject() which transparently handles both loose and packed objects.
+ * Tracks how many objects could not be read (genuinely missing/corrupt).
  *
  * @param {string} gitDir
  * @param {string[]} startHashes — branch tips to start from
- * @returns {{ commits: ParsedCommit[], packedCount: number }}
+ * @returns {{ commits: ParsedCommit[], skippedCount: number }}
  */
 function walkCommits(gitDir, startHashes) {
   const visited = new Set();
   const commits = [];
   const queue = [...startHashes];
-  let packedCount = 0;
+  let skippedCount = 0;
 
   while (queue.length > 0) {
     const hash = queue.shift();
@@ -24,10 +25,10 @@ function walkCommits(gitDir, startHashes) {
     if (visited.has(hash)) continue;
     visited.add(hash);
 
-    const obj = readLooseObject(gitDir, hash);
+    const obj = readObject(gitDir, hash);
     if (!obj) {
-      // Object is packed — count it and skip
-      packedCount++;
+      // Object genuinely missing (not loose, not in any pack)
+      skippedCount++;
       continue;
     }
 
@@ -54,7 +55,7 @@ function walkCommits(gitDir, startHashes) {
   // Sort by author timestamp descending (newest first)
   commits.sort((a, b) => b.author.timestamp - a.author.timestamp);
 
-  return { commits, packedCount };
+  return { commits, packedCount: skippedCount };
 }
 
 /**
@@ -109,9 +110,9 @@ function diffTrees(gitDir, oldTreeHash, newTreeHash) {
 function flattenTree(gitDir, treeHash, prefix) {
   const result = new Map();
 
-  const obj = readLooseObject(gitDir, treeHash);
+  const obj = readObject(gitDir, treeHash);
   if (!obj || obj.type !== 'tree') {
-    return result; // Packed or not a tree — skip silently
+    return result; // Not found or not a tree — skip silently
   }
 
   const entries = parseTree(obj.body);

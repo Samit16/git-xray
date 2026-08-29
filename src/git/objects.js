@@ -5,6 +5,7 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 const { GitXRayError } = require('./locator.js');
+const { readPackedObject, clearPackCache } = require('./pack.js');
 
 /**
  * Convert a hex SHA-1 hash to its loose object file path.
@@ -241,10 +242,36 @@ function parseTree(body) {
   return entries;
 }
 
+/**
+ * Storage-agnostic object reader.
+ * Tries to read the object as a loose object first. If not found,
+ * searches all packfiles via IDX lookup.
+ *
+ * This is the primary API that the rest of Git X-Ray should use
+ * for generic object access. readLooseObject() remains available
+ * for callers that specifically need loose-only semantics.
+ *
+ * @param {string} gitDir — path to the .git directory
+ * @param {string} hash — 40-char hex SHA-1
+ * @param {number} [_depth] — internal: current delta chain depth (for REF_DELTA recursion)
+ * @returns {{ type: string, size: number, body: Buffer } | null}
+ */
+function readObject(gitDir, hash, _depth) {
+  // 1. Try loose object first (fast path)
+  const loose = readLooseObject(gitDir, hash);
+  if (loose) return loose;
+
+  // 2. Try packed objects — pass readObject itself as the REF_DELTA resolver
+  // so that REF_DELTA bases can be resolved from any storage location
+  return readPackedObject(gitDir, hash, readObject, _depth || 0);
+}
+
 module.exports = {
   hashToPath,
   looseObjectExists,
   readLooseObject,
+  readObject,
   parseCommit,
   parseTree,
+  clearPackCache,
 };
