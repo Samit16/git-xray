@@ -1,0 +1,17 @@
+# .zero-dep.toml
+# NOTE: the organizer brief only specifies this file should contain the
+# track letter and a one-line pitch — an exact schema wasn't published
+# beyond that. The structure below is a reasonable best guess; double-check
+# the Hackathon Raptors Discord for a pinned template before final submission
+# in case they've published a stricter format.
+
+track = "A"
+pitch = "An X-ray machine for a codebase's history — reads the raw .git object database directly to surface ownership risk, churn hotspots, and bus-factor, with zero runtime dependencies."
+
+language = "JavaScript"
+runtime = "Node.js"
+runtime_version = "24 LTS"  # update to match whatever you actually target/pin
+
+bonus_challenges_attempted = ["single-file", "reproducible-build", "package-killer", "stdlib-log"]
+
+team_size = 3
