@@ -75,15 +75,3 @@ node --test tests/test.js
 ```
 
 ---
-
-## Honest Scope & Limitations
-
-1. **Loose Objects Scope**: This tool parses loose objects under `.git/objects/xx/` and ref logs (`refs/heads/*`, `packed-refs`). If repository objects have been packed into `.pack` delta archives via `git gc`, Git X-Ray detects and tallies them, printing an honest warning (`"N object(s) are packed and not analyzed"`) instead of crashing or falsifying metrics.
-2. **Merge Commits**: Follows the standard `--first-parent` diffing convention to prevent double-counting churn in merge workflows.
-3. **Read-Only**: Pure forensics and diagnostics — will never mutate or write to `.git`.
-
----
-
-## Standard Library Architecture & Substitution
-
-See [STDLIB.md](file:///c:/Users/samit/OneDrive/Desktop/Projects/git-xray/STDLIB.md) for full documentation on how all third-party libraries (including `chalk`, `commander`, `simple-git`, `zlib`, and `cli-table3`) were eliminated in favor of native Node.js standard libraries.
