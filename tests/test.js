@@ -22,7 +22,10 @@ const { walkCommits, diffTrees, flattenTree, computeAllDiffs } = require('../src
 const { computeChurn } = require('../src/analytics/churn.js');
 const { computeOwnership } = require('../src/analytics/ownership.js');
 const { computeBusFactor } = require('../src/analytics/bus-factor.js');
-const { renderSummaryPanel, renderDashboardSummary, formatTable, stripAnsi } = require('../src/outputs/terminal.js');
+const { computeHotspots, filterBySeverity } = require('../src/analytics/hotspots.js');
+const { computeOverview } = require('../src/analytics/overview.js');
+const { analyzeComplexity, analyzeDirectoryComplexity, detectLanguage, stripComments } = require('../src/analytics/complexity.js');
+const { renderSummaryPanel, renderDashboardSummary, renderOverviewReport, formatTable, stripAnsi } = require('../src/outputs/terminal.js');
 const { buildDashboardMenu, renderDashboardMenu } = require('../src/ui/dashboard.js');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -389,8 +392,54 @@ describe('interactive dashboard', () => {
   });
 });
 
+// ─── Executive Overview Tests ─────────────────────────────────────────────────
+
+describe('executive overview', () => {
+  const head = resolveHead(GIT_DIR);
+  const { commits } = walkCommits(GIT_DIR, [head.hash]);
+  const diffs = computeAllDiffs(GIT_DIR, commits);
+
+  it('computeOverview should compute all required executive metrics', () => {
+    const overview = computeOverview(REPO_ROOT, commits, diffs, 80);
+
+    assert.equal(overview.repository, REPO_ROOT);
+    assert.ok(overview.commitCount >= 1);
+    assert.ok(overview.contributorCount >= 1);
+    assert.ok(overview.fileCount >= 1);
+    assert.ok(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(overview.overallRisk));
+    assert.ok(typeof overview.riskScore === 'number');
+
+    // Knowledge concentration
+    assert.ok(overview.knowledgeConcentration);
+    assert.ok(typeof overview.knowledgeConcentration.topCommitter === 'string');
+    assert.ok(typeof overview.knowledgeConcentration.topCommitterShare === 'number');
+    assert.ok(typeof overview.knowledgeConcentration.avgMaxOwnership === 'number');
+    assert.ok(['HIGH', 'MODERATE', 'BALANCED'].includes(overview.knowledgeConcentration.concentrationLevel));
+
+    // Bus factor alerts
+    assert.ok(overview.busFactorAlerts);
+    assert.equal(overview.busFactorAlerts.threshold, 80);
+    assert.ok(typeof overview.busFactorAlerts.atRiskCount === 'number');
+    assert.ok(Array.isArray(overview.busFactorAlerts.topAlerts));
+
+    // Critical files and hotspots
+    assert.ok(Array.isArray(overview.criticalFiles));
+    assert.ok(Array.isArray(overview.topHotspots));
+  });
+
+  it('renderOverviewReport should format clean text output with all sections', () => {
+    const overview = computeOverview(REPO_ROOT, commits, diffs, 80);
+    const output = renderOverviewReport(overview);
+
+    assert.match(output, /Repository Executive Overview/i);
+    assert.match(output, /Knowledge Concentration/i);
+    assert.match(output, /Bus-Factor Alerts/i);
+    assert.match(output, /Top Risk Hotspots & Critical Files/i);
+  });
+});
+
 describe('cli regression', () => {
-  it('should open the interactive dashboard when a single repo path is supplied', () => {
+  it('should provide the executive overview by default when a single repo path is supplied', () => {
     const result = spawnSync(process.execPath, ['src/index.js', '.'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
@@ -398,7 +447,9 @@ describe('cli regression', () => {
 
     assert.equal(result.status, 0);
     assert.match(result.stdout + result.stderr, /Git X-Ray/i);
-    assert.match(result.stdout + result.stderr, /Commit Log/i);
+    assert.match(result.stdout + result.stderr, /Repository Executive Overview/i);
+    assert.match(result.stdout + result.stderr, /Knowledge Concentration/i);
+    assert.match(result.stdout + result.stderr, /Bus-Factor Alerts/i);
   });
 
   it('should warn when history may be incomplete because objects are packed or skipped', () => {
@@ -421,6 +472,343 @@ describe('cli regression', () => {
 
     assert.equal(result.status, 0);
     assert.match(result.stdout + result.stderr, /packed|partial|incomplete/i);
+  });
+
+  it('should handle a fresh empty repository without crashing', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gitxray-empty-'));
+    const repoPath = path.join(tempRoot, 'empty-repo');
+    fs.mkdirSync(repoPath);
+
+    spawnSync('git', ['init'], { cwd: repoPath, stdio: 'ignore' });
+
+    const result = spawnSync(process.execPath, ['src/index.js', repoPath, 'log'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout + result.stderr, /empty repo|No commits found|all objects are packed/i);
+  });
+
+  it('should report a clean error for unknown CLI flags', () => {
+    const result = spawnSync(process.execPath, ['src/index.js', '.', '--bogus'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout + result.stderr, /Unknown option|--bogus/i);
+    assert.doesNotMatch(result.stdout + result.stderr, /ERR_PARSE_ARGS_UNKNOWN_OPTION/i);
+  });
+});
+
+describe('hotspots analysis', () => {
+  it('should compute hotspots from commits and diffs', () => {
+    const head = resolveHead(GIT_DIR);
+    const commits = walkCommits(GIT_DIR, [head.hash]).commits;
+    const diffs = computeAllDiffs(GIT_DIR, commits);
+
+    const hotspots = computeHotspots(commits, diffs);
+
+    assert.ok(Array.isArray(hotspots));
+    assert.ok(hotspots.length > 0);
+
+    // Each hotspot should have required fields
+    for (const h of hotspots) {
+      assert.ok(typeof h.file === 'string');
+      assert.ok(typeof h.riskScore === 'number');
+      assert.ok(h.riskScore >= 0 && h.riskScore <= 100);
+      assert.ok(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(h.severity));
+      assert.ok(typeof h.churn === 'number');
+      assert.ok(typeof h.ownershipConcentration === 'number');
+      assert.ok(typeof h.primaryRisk === 'string');
+    }
+  });
+
+  it('should sort hotspots by risk score descending', () => {
+    const head = resolveHead(GIT_DIR);
+    const commits = walkCommits(GIT_DIR, [head.hash]).commits;
+    const diffs = computeAllDiffs(GIT_DIR, commits);
+    const hotspots = computeHotspots(commits, diffs);
+
+    // Verify descending order
+    for (let i = 0; i < hotspots.length - 1; i++) {
+      assert.ok(hotspots[i].riskScore >= hotspots[i + 1].riskScore);
+    }
+  });
+
+  it('should filter hotspots by severity level', () => {
+    const head = resolveHead(GIT_DIR);
+    const commits = walkCommits(GIT_DIR, [head.hash]).commits;
+    const diffs = computeAllDiffs(GIT_DIR, commits);
+    const hotspots = computeHotspots(commits, diffs);
+
+    const critical = filterBySeverity(hotspots, 'CRITICAL');
+    assert.ok(critical.every((h) => h.severity === 'CRITICAL'));
+
+    const highAndAbove = filterBySeverity(hotspots, 'HIGH');
+    assert.ok(highAndAbove.every((h) => ['CRITICAL', 'HIGH'].includes(h.severity)));
+  });
+
+  it('should compute churn from file touch count', () => {
+    const head = resolveHead(GIT_DIR);
+    const commits = walkCommits(GIT_DIR, [head.hash]).commits;
+    const diffs = computeAllDiffs(GIT_DIR, commits);
+    const hotspots = computeHotspots(commits, diffs);
+
+    // High-churn files should have high churn values
+    const maxChurn = Math.max(...hotspots.map((h) => h.churn));
+    assert.ok(maxChurn > 1); // Repo should have some modified files
+  });
+
+  it('should identify ownership concentration', () => {
+    const head = resolveHead(GIT_DIR);
+    const commits = walkCommits(GIT_DIR, [head.hash]).commits;
+    const diffs = computeAllDiffs(GIT_DIR, commits);
+    const hotspots = computeHotspots(commits, diffs);
+
+    // All ownership concentrations should be 0-100
+    for (const h of hotspots) {
+      assert.ok(h.ownershipConcentration >= 0 && h.ownershipConcentration <= 100);
+    }
+
+    // At least some files should be identified by a top author
+    const withAuthor = hotspots.filter((h) => h.topAuthor);
+    assert.ok(withAuthor.length > 0);
+  });
+
+  it('should handle hotspots CLI command', () => {
+    const result = spawnSync(process.execPath, ['src/index.js', '.', 'hotspots'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout + result.stderr, /Risk Hotspots|CRITICAL|HIGH|MEDIUM|LOW/i);
+  });
+
+  it('should output hotspots as JSON', () => {
+    const result = spawnSync(process.execPath, ['src/index.js', '.', 'hotspots', '--json'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0);
+
+    let json;
+    try {
+      json = JSON.parse(result.stdout);
+    } catch {
+      assert.fail('JSON output should be valid');
+    }
+
+    assert.ok(Array.isArray(json.hotspots));
+    for (const h of json.hotspots) {
+      assert.ok(typeof h.file === 'string');
+      assert.ok(typeof h.riskScore === 'number');
+      assert.ok(typeof h.severity === 'string');
+    }
+  });
+});
+
+describe('structural complexity', () => {
+  it('should detect language from file extension', () => {
+    assert.equal(detectLanguage('file.js'), 'JavaScript');
+    assert.equal(detectLanguage('file.py'), 'Python');
+    assert.equal(detectLanguage('file.java'), 'Java');
+    assert.equal(detectLanguage('file.unknown'), 'Unknown');
+  });
+
+  it('should strip comments from code', () => {
+    const code = `
+      // This is a comment
+      let x = 5; // inline comment
+      /* block comment */ let y = 10;
+    `;
+
+    const stripped = stripComments(code, 'JavaScript');
+    assert.doesNotMatch(stripped, /This is a comment/);
+    assert.doesNotMatch(stripped, /inline comment/);
+    assert.doesNotMatch(stripped, /block comment/);
+    assert.match(stripped, /let x = 5/);
+    assert.match(stripped, /let y = 10/);
+  });
+
+  it('should analyze complexity of a simple file', () => {
+    const tempFile = path.join(os.tmpdir(), 'simple-test.js');
+    fs.writeFileSync(tempFile, `
+function add(a, b) {
+  return a + b;
+}
+    `);
+
+    const analysis = analyzeComplexity(tempFile);
+
+    assert.ok(typeof analysis.score === 'number');
+    assert.ok(analysis.score >= 0 && analysis.score <= 100);
+    assert.ok(['TRIVIAL', 'LOW', 'MEDIUM', 'HIGH', 'VERY HIGH'].includes(analysis.complexity));
+    assert.equal(analysis.branches, 0);
+    assert.ok(analysis.functions >= 1);
+
+    fs.unlinkSync(tempFile);
+  });
+
+  it('should analyze complexity of a branched file', () => {
+    const tempFile = path.join(os.tmpdir(), 'branched-test.js');
+    fs.writeFileSync(tempFile, `
+function complex(x) {
+  if (x > 0) {
+    if (x > 10) {
+      if (x > 100) {
+        return 'big';
+      } else {
+        return 'medium';
+      }
+    } else {
+      return 'small';
+    }
+  } else if (x < -10) {
+    return 'negative';
+  } else {
+    return 'zero';
+  }
+}
+    `);
+
+    const analysis = analyzeComplexity(tempFile);
+
+    assert.ok(analysis.branches >= 4); // Multiple if/else branches
+    assert.ok(analysis.maxDepth >= 3); // Deep nesting
+    assert.ok(analysis.score >= 10); // Should have meaningful complexity
+
+    fs.unlinkSync(tempFile);
+  });
+
+  it('should detect loops and switches', () => {
+    const tempFile = path.join(os.tmpdir(), 'loops-test.js');
+    fs.writeFileSync(tempFile, `
+function iterate(items) {
+  for (let i = 0; i < items.length; i++) {
+    switch (items[i].type) {
+      case 'a':
+        console.log('A');
+        break;
+      case 'b':
+        console.log('B');
+        break;
+      default:
+        console.log('other');
+    }
+  }
+  
+  let j = 0;
+  while (j < 10) {
+    j++;
+  }
+}
+    `);
+
+    const analysis = analyzeComplexity(tempFile);
+
+    assert.ok(analysis.loops >= 2); // for and while
+    assert.ok(analysis.switches >= 1); // switch
+    assert.ok(analysis.cases >= 2); // case statements
+
+    fs.unlinkSync(tempFile);
+  });
+
+  it('should detect logical operators and ternaries', () => {
+    const tempFile = path.join(os.tmpdir(), 'operators-test.js');
+    fs.writeFileSync(tempFile, `
+function check(a, b, c) {
+  return (a && b) || c ? 'yes' : 'no';
+}
+    `);
+
+    const analysis = analyzeComplexity(tempFile);
+
+    assert.ok(analysis.logicalOps >= 2); // && and ||
+    assert.ok(analysis.ternaries >= 1); // ternary operator
+
+    fs.unlinkSync(tempFile);
+  });
+
+  it('should ignore keywords in comments and strings', () => {
+    const tempFile = path.join(os.tmpdir(), 'string-test.js');
+    fs.writeFileSync(tempFile, `
+function demo() {
+  // This function has if and while in comments, not real branches
+  const msg = "if you see this, if statements in strings are ignored";
+  
+  /* while and for loops mentioned here should not count */
+  return msg;
+}
+    `);
+
+    const analysis = analyzeComplexity(tempFile);
+
+    // Should not count branches/loops from comments/strings
+    assert.equal(analysis.branches, 0);
+    assert.equal(analysis.loops, 0);
+
+    fs.unlinkSync(tempFile);
+  });
+
+  it('should analyze directory complexity', () => {
+    const complexities = analyzeDirectoryComplexity(path.join(REPO_ROOT, 'src'));
+
+    assert.ok(Array.isArray(complexities));
+    assert.ok(complexities.length > 0);
+
+    // Each analysis should have required fields
+    for (const c of complexities) {
+      assert.ok(typeof c.file === 'string');
+      assert.ok(typeof c.score === 'number');
+      assert.ok(typeof c.complexity === 'string');
+      assert.ok(typeof c.language === 'string');
+      assert.ok(c.score >= 0 && c.score <= 100);
+    }
+  });
+
+  it('should sort complexity results by score descending', () => {
+    const complexities = analyzeDirectoryComplexity(path.join(REPO_ROOT, 'src'));
+
+    for (let i = 0; i < complexities.length - 1; i++) {
+      assert.ok(complexities[i].score >= complexities[i + 1].score);
+    }
+  });
+
+  it('should handle complexity CLI command', () => {
+    const result = spawnSync(process.execPath, ['src/index.js', '.', 'complexity'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout + result.stderr, /Structural Complexity|VERY HIGH|HIGH|MEDIUM|LOW|TRIVIAL/i);
+  });
+
+  it('should output complexity as JSON', () => {
+    const result = spawnSync(process.execPath, ['src/index.js', '.', 'complexity', '--json'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0);
+
+    let json;
+    try {
+      json = JSON.parse(result.stdout);
+    } catch {
+      assert.fail('JSON output should be valid');
+    }
+
+    assert.ok(Array.isArray(json.complexities));
+    for (const c of json.complexities) {
+      assert.ok(typeof c.file === 'string');
+      assert.ok(typeof c.score === 'number');
+      assert.ok(typeof c.complexity === 'string');
+    }
   });
 });
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const util = require('node:util');
+const path = require('node:path');
 
 const BOX = {
   topLeft: '╭',
@@ -212,6 +213,188 @@ function colorPercent(value) {
   return style('green', text);
 }
 
+/**
+ * Render hotspots report as a formatted panel.
+ * @param {Array} hotspots — from computeHotspots()
+ * @param {string} repoPath
+ * @returns {string}
+ */
+function renderHotspotsReport(hotspots, repoPath) {
+  const title = `Risk Hotspots (${hotspots.length} files)`;
+  const lines = [renderDashboardSummary({ title, repoPath, metrics: [], status: 'Analysis' })];
+
+  if (hotspots.length === 0) {
+    lines.push(style('green', '✓ No high-risk files detected.'));
+    return lines.join('\n');
+  }
+
+  // Group by severity
+  const bySeverity = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
+  for (const h of hotspots) {
+    bySeverity[h.severity].push(h);
+  }
+
+  // Show critical and high first
+  for (const severity of ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']) {
+    const items = bySeverity[severity];
+    if (items.length === 0) continue;
+
+    const severityColor = {
+      CRITICAL: 'red',
+      HIGH: 'yellow',
+      MEDIUM: 'cyan',
+      LOW: 'green',
+    }[severity];
+
+    lines.push('');
+    lines.push(style('bold', style(severityColor, `${severity} (${items.length} files):`)));
+
+    for (const hotspot of items.slice(0, 10)) {
+      const scoreStr = style('bold', String(hotspot.riskScore));
+      const fileStr = style('cyan', hotspot.file);
+      const [author, touches] = hotspot.topAuthor || ['—', 0];
+      const churnStr = `${hotspot.churn} touches`;
+      const ownerStr = `${hotspot.ownershipConcentration}% by ${author}`;
+
+      lines.push(`  ${scoreStr}/100  ${fileStr}`);
+      lines.push(`         ${churnStr} · ${ownerStr}`);
+      lines.push(`         Primary: ${hotspot.primaryRisk}`);
+    }
+
+    if (items.length > 10) {
+      lines.push(`  ... and ${items.length - 10} more`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Render structural complexity report as a formatted panel.
+ * @param {Array} complexities — from analyzeDirectoryComplexity()
+ * @param {string} repoPath
+ * @returns {string}
+ */
+function renderComplexityReport(complexities, repoPath) {
+  const title = `Structural Complexity (${complexities.length} files)`;
+  const lines = [renderDashboardSummary({ title, repoPath, metrics: [], status: 'Analysis' })];
+
+  if (complexities.length === 0) {
+    lines.push(style('green', '✓ No source files found.'));
+    return lines.join('\n');
+  }
+
+  // Group by complexity level
+  const byLevel = { 'VERY HIGH': [], HIGH: [], MEDIUM: [], LOW: [], TRIVIAL: [] };
+  for (const c of complexities) {
+    byLevel[c.complexity].push(c);
+  }
+
+  // Show highest complexity first
+  for (const level of ['VERY HIGH', 'HIGH', 'MEDIUM', 'LOW', 'TRIVIAL']) {
+    const items = byLevel[level];
+    if (items.length === 0) continue;
+
+    const levelColor = {
+      'VERY HIGH': 'red',
+      HIGH: 'yellow',
+      MEDIUM: 'cyan',
+      LOW: 'green',
+      TRIVIAL: 'dim',
+    }[level];
+
+    lines.push('');
+    lines.push(style('bold', style(levelColor, `${level} (${items.length} files):`)));
+
+    for (const comp of items.slice(0, 8)) {
+      const scoreStr = style('bold', String(comp.score));
+      const fileStr = style('cyan', path.basename(comp.file));
+      const langStr = style('dim', `[${comp.language}]`);
+      const branchStr = `${comp.branches} branches`;
+      const nestStr = `max depth ${comp.maxDepth}`;
+
+      lines.push(`  ${scoreStr}/100  ${fileStr} ${langStr}`);
+      lines.push(`         ${branchStr} · ${nestStr}`);
+    }
+
+    if (items.length > 8) {
+      lines.push(`  ... and ${items.length - 8} more`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Render Executive Overview report as a clean, readable terminal view.
+ * @param {Object} overview — from computeOverview()
+ * @returns {string}
+ */
+function renderOverviewReport(overview) {
+  const lines = [];
+
+  const riskColor = {
+    CRITICAL: 'red',
+    HIGH: 'yellow',
+    MEDIUM: 'cyan',
+    LOW: 'green',
+  }[overview.overallRisk] || 'white';
+
+  const title = `Repository Executive Overview`;
+  const summaryBox = renderDashboardSummary({
+    title,
+    repoPath: overview.repository,
+    metrics: [
+      { label: 'Commits', value: overview.commitCount },
+      { label: 'Contributors', value: overview.contributorCount },
+      { label: 'Files', value: overview.fileCount },
+      { label: 'Overall Risk', value: `${overview.overallRisk} (${overview.riskScore}/100)` },
+    ],
+    status: overview.overallRisk === 'LOW' ? 'Healthy' : overview.overallRisk === 'MEDIUM' ? 'Moderate' : 'Risk Alert',
+  });
+
+  lines.push(summaryBox);
+  lines.push('');
+
+  // 1. Knowledge Concentration
+  const kc = overview.knowledgeConcentration;
+  const kcColor = kc.concentrationLevel === 'HIGH' ? 'red' : kc.concentrationLevel === 'MODERATE' ? 'yellow' : 'green';
+  lines.push(style('bold', style('cyan', '─── Knowledge Concentration ───')));
+  lines.push(`  Concentration Level: ${style('bold', style(kcColor, kc.concentrationLevel))}`);
+  lines.push(`  Top Contributor:     ${style('bold', kc.topCommitter)} (${kc.topCommitterShare}% of all commits)`);
+  lines.push(`  Avg File Dominance:  ${kc.avgMaxOwnership}% by primary author`);
+  lines.push('');
+
+  // 2. Bus-Factor Alerts
+  const bfa = overview.busFactorAlerts;
+  const bfColor = bfa.atRiskCount > 0 ? 'red' : 'green';
+  lines.push(style('bold', style('cyan', '─── Bus-Factor Alerts ───')));
+  lines.push(`  Single-Author Dominated: ${style('bold', style(bfColor, `${bfa.atRiskCount} files`))} (${bfa.percentage}% of codebase > ${bfa.threshold}% ownership)`);
+  if (bfa.topAlerts.length > 0) {
+    for (const item of bfa.topAlerts) {
+      lines.push(`  • ${style('yellow', item.path)}: ${style('bold', `${item.topAuthorPercentage.toFixed(0)}%`)} by ${item.topAuthor} (${item.distinctAuthors} author${item.distinctAuthors === 1 ? '' : 's'})`);
+    }
+  } else {
+    lines.push(`  ${style('green', '✓ No single-author bottlenecks detected.')}`);
+  }
+  lines.push('');
+
+  // 3. Critical Files & Top Hotspots
+  lines.push(style('bold', style('cyan', '─── Top Risk Hotspots & Critical Files ───')));
+  if (overview.topHotspots.length > 0) {
+    for (const h of overview.topHotspots) {
+      const sevColor = h.severity === 'CRITICAL' ? 'red' : h.severity === 'HIGH' ? 'yellow' : h.severity === 'MEDIUM' ? 'cyan' : 'green';
+      const badge = style('bold', style(sevColor, `[${h.severity}]`));
+      lines.push(`  ${badge} ${style('bold', h.file)} (${h.riskScore}/100)`);
+      lines.push(`     Touches: ${h.churn} · Concentration: ${h.ownershipConcentration}% · Risk: ${h.primaryRisk}`);
+    }
+  } else {
+    lines.push(`  ${style('green', '✓ No high-risk hotspots found.')}`);
+  }
+
+  return lines.join('\n');
+}
+
 module.exports = {
   style,
   formatTable,
@@ -224,4 +407,8 @@ module.exports = {
   formatPercent,
   colorPercent,
   stripAnsi,
+  renderHotspotsReport,
+  renderComplexityReport,
+  renderOverviewReport,
 };
+

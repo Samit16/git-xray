@@ -19,17 +19,29 @@ const { parseArgs } = require('node:util');
  * @returns {{ command: string, repoPath: string, options: { json: boolean, threshold: number } }}
  */
 function parseCLI() {
-  const COMMANDS = ['log', 'ownership', 'churn', 'bus-factor', 'interactive'];
+  const COMMANDS = ['overview', 'log', 'ownership', 'churn', 'bus-factor', 'hotspots', 'complexity', 'interactive'];
 
-  const { values, positionals } = parseArgs({
-    options: {
-      json: { type: 'boolean', default: false },
-      threshold: { type: 'string', default: '80' },
-      help: { type: 'boolean', short: 'h', default: false },
-    },
-    allowPositionals: true,
-    strict: true,
-  });
+  let values;
+  let positionals;
+
+  try {
+    ({ values, positionals } = parseArgs({
+      options: {
+        json: { type: 'boolean', default: false },
+        threshold: { type: 'string', default: '80' },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+      allowPositionals: true,
+      strict: true,
+    }));
+  } catch (err) {
+    const optionName = err && err.code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION' && err.optionName
+      ? err.optionName
+      : 'unknown option';
+    console.error(`Unknown option: ${optionName}`);
+    console.error('Use --help for usage information.');
+    process.exit(1);
+  }
 
   if (values.help || positionals.length === 0) {
     printHelp();
@@ -44,9 +56,9 @@ function parseCLI() {
       command = positionals[0];
       repoPath = process.cwd();
     } else {
-      // Default single-path invocation opens the central dashboard experience.
+      // Default single-path invocation provides executive overview
       repoPath = positionals[0];
-      command = 'interactive';
+      command = 'overview';
     }
   } else {
     // gitxray <path> <command>
@@ -82,15 +94,18 @@ function printHelp() {
 │ Git X-Ray — Codebase history intelligence for modern engineering  │
 ├──────────────────────────────────────────────────────────────────────┤
 │ Usage:                                                              │
-│   node src/index.js <path> <command> [options]                     │
-│   node src/index.js <path> [options]      (defaults to log)         │
-│   node src/index.js <command> [options]   (uses current directory)  │
+│   node src/index.js <path> [command] [options]                     │
+│   node src/index.js [command] [options]   (uses current directory)  │
 │                                                                      │
 │ Commands:                                                           │
+│   overview     Executive overview (default)                         │
 │   log          Reconstructed commit history                          │
 │   ownership    Per-file ownership breakdown                         │
 │   churn        Files ranked by change intensity                     │
 │   bus-factor   Files at risk from concentration of authorship       │
+│   hotspots     Identify high-risk files by combining signals        │
+│   complexity   Analyze structural complexity of source code         │
+│   interactive  Launch interactive terminal menu                      │
 │                                                                      │
 │ Options:                                                            │
 │   --json             Output as JSON                                  │
@@ -98,8 +113,9 @@ function printHelp() {
 │   -h, --help         Show this help message                         │
 │                                                                      │
 │ Examples:                                                           │
+│   node src/index.js .                                               │
 │   node src/index.js . log                                           │
-│   node src/index.js /path/to/repo ownership --json                  │
+│   node src/index.js /path/to/repo complexity                        │
 │   node src/index.js . bus-factor --threshold 70                     │
 ╰──────────────────────────────────────────────────────────────────────╯
 `.trim();

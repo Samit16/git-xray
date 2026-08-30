@@ -8,10 +8,13 @@ Built for **Zero Dependency 2026 · Track A (Developer Tools & CLI)**.
 
 ## Features
 
+- **`gitxray <repo>` (Default Overview)**: Instant executive repo assessment — commit counts, contributor counts, file counts, composite risk score, knowledge concentration, bus-factor alerts, and top critical hotspots.
 - **`gitxray <path> log`**: Reconstructs commit history (hash, author, date, message) by traversing loose commit objects.
 - **`gitxray <path> churn`**: Computes change frequency per file across commits, with terminal bar charts.
 - **`gitxray <path> ownership`**: Identifies primary authors, distinct contributors, and percentage breakdown per file.
 - **`gitxray <path> bus-factor`**: Surfaces files where a single committer owns >N% of changes (configurable with `--threshold`).
+- **`gitxray <path> hotspots`**: Identifies risk hotspots by combining churn, ownership dominance, and recency.
+- **`gitxray <path> complexity`**: Performs zero-dependency structural complexity analysis on codebase files.
 - **`--json`**: Machine-readable JSON output for any command.
 - **Colored Terminal Reports**: Native styling using `util.styleText` (respects `NO_COLOR`).
 - **Graceful Failure**: Clean messages for missing repositories, empty trees, and packed objects — zero unhandled stack dumps.
@@ -25,6 +28,12 @@ Built for **Zero Dependency 2026 · Track A (Developer Tools & CLI)**.
 
 ### Run directly with Node
 ```bash
+# Default Executive Overview
+node src/index.js .
+
+# Or explicit overview command
+node src/index.js . overview
+
 # View commit history
 node src/index.js . log
 
@@ -37,13 +46,20 @@ node src/index.js . ownership
 # View bus-factor risks (default 80% threshold)
 node src/index.js . bus-factor
 
+# View risk hotspots
+node src/index.js . hotspots
+
+# View structural complexity
+node src/index.js . complexity
+
 # Custom threshold and JSON output
+node src/index.js . --json
 node src/index.js . bus-factor --threshold 70 --json
 ```
 
 Or run the bundled standalone single-file version:
 ```bash
-node dist/gitxray.js . bus-factor
+node dist/gitxray.js .
 ```
 
 ---
