@@ -25,6 +25,8 @@ const {
   renderHotspotsReport,
   renderComplexityReport,
   renderOverviewReport,
+  renderKnowledgeReport,
+  renderChurnReport,
 } = require('./outputs/terminal.js');
 const { buildDashboardMenu, renderDashboardMenu, runInteractiveDashboard } = require('./ui/dashboard.js');
 
@@ -93,18 +95,22 @@ function main() {
       }
       case 'interactive': {
         const diffs = computeAllDiffs(gitDir, commits);
+        const overview = computeOverview(repoPath, commits, diffs, options.threshold);
         runInteractiveDashboard({
           repoPath,
           commits,
           packedCount,
           diffs,
           options,
+          overview,
           onSelect: (selectedCommand) => {
             if (selectedCommand === 'overview') handleOverview(repoPath, commits, diffs, options);
-            else if (selectedCommand === 'log') handleLog(repoPath, commits, packedCount, options);
-            else if (selectedCommand === 'churn') handleChurn(repoPath, commits, diffs, options);
-            else if (selectedCommand === 'ownership') handleOwnership(repoPath, commits, diffs, options);
+            else if (selectedCommand === 'hotspots') handleHotspots(repoPath, commits, diffs, options);
             else if (selectedCommand === 'bus-factor') handleBusFactor(repoPath, commits, diffs, options);
+            else if (selectedCommand === 'ownership') handleOwnership(repoPath, commits, diffs, options);
+            else if (selectedCommand === 'churn') handleChurn(repoPath, commits, diffs, options);
+            else if (selectedCommand === 'complexity') handleComplexity(repoPath, options);
+            else if (selectedCommand === 'log') handleLog(repoPath, commits, packedCount, options);
           },
         });
         break;
@@ -217,32 +223,7 @@ function handleChurn(repoPath, commits, diffs, options) {
     return;
   }
 
-  console.log(
-    renderDashboardSummary({
-      title: `Churn Report (${churnData.length} files)`,
-      repoPath,
-      metrics: [
-        { label: 'Files', value: churnData.length },
-        { label: 'Commits', value: commits.length },
-      ],
-      status: 'Live',
-    })
-  );
-
-  if (churnData.length === 0) {
-    printWarning('No file changes detected.');
-    return;
-  }
-
-  const headers = ['File', 'Touches', 'Bar'];
-  const maxTouches = churnData[0].touches;
-  const rows = churnData.map((entry) => {
-    const barLen = Math.max(1, Math.round((entry.touches / maxTouches) * 20));
-    const bar = '█'.repeat(barLen);
-    return [entry.path, String(entry.touches), style('cyan', bar)];
-  });
-
-  console.log(formatTable(headers, rows));
+  console.log(renderChurnReport(churnData, commits.length, repoPath));
   printSuccess(`${churnData.length} files tracked across ${commits.length} commits`);
 }
 
@@ -260,7 +241,7 @@ function handleOwnership(repoPath, commits, diffs, options) {
 
   console.log(
     renderDashboardSummary({
-      title: `Ownership Report (${ownershipData.length} files)`,
+      title: `Ownership Breakdown (${ownershipData.length} files)`,
       repoPath,
       metrics: [
         { label: 'Files', value: ownershipData.length },
@@ -292,7 +273,6 @@ function handleBusFactor(repoPath, commits, diffs, options) {
   const ownershipData = computeOwnership(commits, diffs);
   const busFactorData = computeBusFactor(ownershipData, options.threshold);
   const atRisk = busFactorData.filter((e) => e.atRisk);
-  const safe = busFactorData.filter((e) => !e.atRisk);
 
   if (options.json) {
     console.log(
@@ -306,37 +286,7 @@ function handleBusFactor(repoPath, commits, diffs, options) {
     return;
   }
 
-  console.log(
-    renderDashboardSummary({
-      title: `Bus Factor Report (threshold: ${options.threshold}%)`,
-      repoPath,
-      metrics: [
-        { label: 'Files', value: busFactorData.length },
-        { label: 'At risk', value: atRisk.length },
-      ],
-      status: atRisk.length > 0 ? 'Watchlist' : 'Healthy',
-    })
-  );
-
-  if (atRisk.length > 0) {
-    console.log(style('red', `\n⚠  ${atRisk.length} file(s) at risk:`));
-    const headers = ['File', 'Top Author', 'Ownership', 'Authors'];
-    const rows = atRisk.map((entry) => [
-      entry.path,
-      entry.topAuthor,
-      colorPercent(entry.topAuthorPercentage),
-      String(entry.distinctAuthors),
-    ]);
-    console.log(formatTable(headers, rows));
-  } else {
-    printSuccess('No files at risk — bus factor looks healthy!');
-  }
-
-  if (safe.length > 0 && atRisk.length > 0) {
-    console.log(
-      style('dim', `\n${safe.length} file(s) below threshold (not shown)`)
-    );
-  }
+  console.log(renderKnowledgeReport(busFactorData, options.threshold, repoPath));
 
   printSuccess(
     `${busFactorData.length} files analyzed, ${atRisk.length} at risk (>${options.threshold}%)`

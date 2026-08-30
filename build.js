@@ -21,10 +21,15 @@ const MODULES = [
   'analytics/hotspots.js',
   'analytics/overview.js',
   'analytics/complexity.js',
+  'ui/core.js',
+  'ui/logo.js',
+  'ui/components.js',
+  'ui/spinner.js',
+  'ui/dashboard.js',
+  'outputs/file-detail.js',
   'outputs/json.js',
   'outputs/terminal.js',
   'cli/args.js',
-  'ui/dashboard.js',
   'index.js',
 ];
 

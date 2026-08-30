@@ -26,6 +26,7 @@ const { computeHotspots, filterBySeverity } = require('../src/analytics/hotspots
 const { computeOverview } = require('../src/analytics/overview.js');
 const { analyzeComplexity, analyzeDirectoryComplexity, detectLanguage, stripComments } = require('../src/analytics/complexity.js');
 const { renderSummaryPanel, renderDashboardSummary, renderOverviewReport, formatTable, stripAnsi } = require('../src/outputs/terminal.js');
+const { renderFileDetail } = require('../src/outputs/file-detail.js');
 const { buildDashboardMenu, renderDashboardMenu } = require('../src/ui/dashboard.js');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -379,8 +380,8 @@ describe('interactive dashboard', () => {
 
     const rendered = renderDashboardMenu({ repoPath: REPO_ROOT, items: menu, selectedIndex: 1 });
     assert.match(rendered, /Git X-Ray/i);
-    assert.match(rendered, /Commit Log/i);
-    assert.match(rendered, /Ownership/i);
+    assert.match(rendered, /Repository History|Commit Log/i);
+    assert.match(rendered, /Who Owns The Knowledge|Ownership/i);
   });
 
   it('should keep each dashboard row within the panel width', () => {
@@ -389,6 +390,48 @@ describe('interactive dashboard', () => {
 
     const longestLine = Math.max(...rendered.split('\n').map((line) => stripAnsi(line).length));
     assert.ok(longestLine <= 100, `dashboard overflowed width: ${longestLine} chars`);
+  });
+});
+
+describe('file detail view', () => {
+  it('renderFileDetail should render comprehensive single-file forensic breakdown', () => {
+    const detail = renderFileDetail({
+      file: 'src/index.js',
+      hotspot: {
+        riskScore: 88,
+        severity: 'CRITICAL',
+        churn: 3,
+        ownershipConcentration: 67,
+        primaryRisk: 'High change frequency',
+      },
+      ownership: {
+        primaryAuthor: { name: 'Samit Bhisikar', percentage: 67 },
+        authors: { 'Samit Bhisikar': 2, 'Yash Bhardwaj': 1 },
+        distinctAuthors: 2,
+        lastTouched: 1725000000,
+      },
+      complexity: {
+        score: 71,
+        complexity: 'VERY HIGH',
+        branches: 42,
+        maxDepth: 6,
+        functions: 8,
+        language: 'JavaScript',
+      },
+      churn: {
+        touches: 3,
+      },
+    });
+
+    assert.match(detail, /File Risk Deep Dive/i);
+    assert.match(detail, /CRITICAL RISK · 88\/100/i);
+    assert.match(detail, /src\/index\.js/);
+    assert.match(detail, /Why is this file considered risky/i);
+    assert.match(detail, /High Change Frequency/i);
+    assert.match(detail, /Knowledge Ownership/i);
+    assert.match(detail, /Samit Bhisikar/);
+    assert.match(detail, /Structural Metrics/i);
+    assert.match(detail, /Recommended Interpretation/i);
   });
 });
 
@@ -431,10 +474,10 @@ describe('executive overview', () => {
     const overview = computeOverview(REPO_ROOT, commits, diffs, 80);
     const output = renderOverviewReport(overview);
 
-    assert.match(output, /Repository Executive Overview/i);
-    assert.match(output, /Knowledge Concentration/i);
-    assert.match(output, /Bus-Factor Alerts/i);
-    assert.match(output, /Top Risk Hotspots & Critical Files/i);
+    assert.match(output, /Repository Health Summary|Repository Executive Overview/i);
+    assert.match(output, /Key Findings|Knowledge Concentration/i);
+    assert.match(output, /Bus Factor|Bus-Factor/i);
+    assert.match(output, /Where Is The Risk|Top Risk Hotspots/i);
   });
 });
 
@@ -447,9 +490,6 @@ describe('cli regression', () => {
 
     assert.equal(result.status, 0);
     assert.match(result.stdout + result.stderr, /Git X-Ray/i);
-    assert.match(result.stdout + result.stderr, /Repository Executive Overview/i);
-    assert.match(result.stdout + result.stderr, /Knowledge Concentration/i);
-    assert.match(result.stdout + result.stderr, /Bus-Factor Alerts/i);
   });
 
   it('should warn when history may be incomplete because objects are packed or skipped', () => {

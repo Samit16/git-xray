@@ -19,8 +19,12 @@ Git X-Ray has **0 npm dependencies**, **0 external APIs**, and **0 subshells to 
 | 7 | `jest` / `mocha` | `node:test` + `node:assert/strict` | Testing Suite | Built-in test runner with nested test suites, TAP output, and subtests without runner frameworks. |
 | 8 | `glob` / `fast-glob` | Recursive `node:fs` (`readdirSync({ withFileTypes: true })`) | Filesystem | Recursively traverses `refs/` directory trees to discover loose branch references. |
 | 9 | `strip-ansi` | Regex `/\x1b\[[0-9;]*m/g` | Formatting | Strips ANSI escape sequences to accurately compute string visual width for column alignment. |
-| 10 | `dotenv` | `process.loadEnvFile()` (Node 20.12+) / `process.env` | Config | Native environment variable handling without external file loaders. |
-| 11 | `semver` / `which` | Built-in `process.version` & `process.cwd` | Diagnostics | Eliminates path-lookup and version checking libraries. |
+| 10 | `ora` / `cli-spinners` | Custom `TerminalSpinner` via `setInterval` + ANSI escapes | Terminal UI | Live braille spinner animation with cursor hiding (`\x1b[?25l`) and TTY auto-detection. |
+| 11 | `boxen` | Native Unicode box-drawing primitives | Terminal UI | Responsive bordered panels, status cards, and metric boxes with terminal width clamping. |
+| 12 | `inquirer` / `prompts` | Raw `process.stdin` + ANSI keycode parser | Interaction | Full interactive terminal dashboard navigation using arrow keys (↑/↓), vim keys (j/k), and Enter. |
+| 13 | `figlet` / ASCII art generator | Handcrafted circuit-grid ASCII logo | Branding | Pixel-accurate green circuit-chip header logo with responsive narrow-terminal fallback. |
+| 14 | `dotenv` | `process.loadEnvFile()` (Node 20.12+) / `process.env` | Config | Native environment variable handling without external file loaders. |
+| 15 | `semver` / `which` | Built-in `process.version` & `process.cwd` | Diagnostics | Eliminates path-lookup and version checking libraries. |
 
 ---
 

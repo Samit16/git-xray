@@ -31,7 +31,7 @@ $ grep -rn "child_process\|exec(\|spawn(" src/
 
 ## 7. One-command build succeeds
 $ node build.js
-✓ Built dist/gitxray.js (SHA-256: 5a5d35694a0eb423eff37791bd8f4636e1e5d2125ab63ca83b48385bd991e9fa)
+✓ Built dist/gitxray.js (SHA-256: c147620bc5890fea4dab6fe59b6ab4b260221245438f992c90adf70d7bd7a651)
 
 ## 8. Reproducible build — two builds, byte-identical output
 $ node build.js && node -e "console.log(require('crypto').createHash('sha256').update(require('fs').readFileSync('dist/gitxray.js')).digest('hex'))" > hash1.txt
@@ -39,7 +39,7 @@ $ node build.js && node -e "console.log(require('crypto').createHash('sha256').u
 $ fc hash1.txt hash2.txt
 Comparing files hash1.txt and HASH2.TXT
 FC: no differences encountered
-IDENTICAL (SHA-256: 5a5d35694a0eb423eff37791bd8f4636e1e5d2125ab63ca83b48385bd991e9fa)
+IDENTICAL (SHA-256: c147620bc5890fea4dab6fe59b6ab4b260221245438f992c90adf70d7bd7a651)
 
 ---
 Summary: zero third-party runtime dependencies confirmed by the checks above.
