@@ -503,21 +503,35 @@ function readRefDelta(packBuf, pos, objOffset, deltaSize, packPath, resolveBase,
  * @returns {{ value: number, pos: number }} — the decoded value and new position
  */
 function readDeltaSize(buf, pos) {
+  if (pos >= buf.length) {
+    throw new GitXRayError(
+      `Truncated delta header: expected variable-length integer at position ${pos}`
+    );
+  }
+
   let value = 0;
   let shift = 0;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (pos >= buf.length) {
-      return { value, pos };
+      throw new GitXRayError(
+        `Truncated delta variable-length integer at position ${pos}`
+      );
     }
     const byte = buf[pos++];
     value |= (byte & 0x7f) << shift;
     shift += 7;
+    if (shift > 28 && (byte & 0x80)) {
+      throw new GitXRayError(
+        `Unreasonably large delta variable-length integer at position ${pos}`
+      );
+    }
     if (!(byte & 0x80)) break;
   }
 
-  return { value, pos };
+  // Ensure unsigned 32-bit value
+  return { value: value >>> 0, pos };
 }
 
 /**
@@ -576,11 +590,26 @@ function applyDelta(base, delta, objOffset, packPath) {
       let copyOffset = 0;
       let copySize = 0;
 
+      // Count how many optional bytes the cmd bits request
+      let extraBytes = 0;
+      for (let bit = 0; bit < 7; bit++) {
+        if (cmd & (1 << bit)) extraBytes++;
+      }
+      if (pos + extraBytes > delta.length) {
+        throw new GitXRayError(
+          `Truncated COPY instruction at offset ${objOffset} in ${packPath}: ` +
+          `needs ${extraBytes} optional bytes but only ${delta.length - pos} remain`
+        );
+      }
+
       // Read offset bytes (bits 0-3 of cmd indicate which bytes are present)
       if (cmd & 0x01) copyOffset  = delta[pos++];
       if (cmd & 0x02) copyOffset |= delta[pos++] << 8;
       if (cmd & 0x04) copyOffset |= delta[pos++] << 16;
-      if (cmd & 0x08) copyOffset |= delta[pos++] << 24;
+      if (cmd & 0x08) copyOffset |= (delta[pos++] << 24) >>> 0;
+
+      // Ensure unsigned 32-bit
+      copyOffset = copyOffset >>> 0;
 
       // Read size bytes (bits 4-6 of cmd indicate which bytes are present)
       if (cmd & 0x10) copySize  = delta[pos++];
@@ -741,6 +770,7 @@ module.exports = {
   readPackHeader,
   readPackObject,
   readPackedObject,
+  readDeltaSize,
   applyDelta,
   clearPackCache,
   // Constants for testing
