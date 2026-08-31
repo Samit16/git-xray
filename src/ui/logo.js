@@ -13,10 +13,6 @@ const WORDMARK_LINES = [
   '╚████████╔╝ ██║    ██║       ██╔╝ ██╗ ██║  ██║██║  ██║   ██║   ',
   ' ╚═══════╝  ╚═╝    ╚═╝       ╚═╝  ╚═╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ',
 ];
-
-/**
- * Compact single-line header for narrow viewports (< 50 cols).
- */
 const COMPACT_WORDMARK = [
   '  ◈ GIT X-RAY · Codebase Forensics',
 ];
