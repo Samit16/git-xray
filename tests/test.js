@@ -335,8 +335,10 @@ describe('terminal output', () => {
     assert.match(panel, /Git X-Ray/i);
     assert.match(panel, /Churn Report/i);
     assert.match(panel, /\/repo\/project/);
-    const plainOutput = output.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+
+    const plainOutput = panel.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
     assert.match(plainOutput, /Files: 42/);
+    
     assert.match(panel, /Top touch: 9/);
   });
 
