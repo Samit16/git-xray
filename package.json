@@ -6,6 +6,9 @@
   "bin": {
     "gitxray": "bin/gitxray.js"
   },
+  "engines":{
+    "node":">=18"
+  },
   "scripts": {
     "build": "node build.js",
     "prepare": "node build.js",
