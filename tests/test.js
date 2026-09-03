@@ -338,8 +338,8 @@ describe('terminal output', () => {
 
     const plainOutput = panel.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
     assert.match(plainOutput, /Files: 42/);
-    
-    assert.match(panel, /Top touch: 9/);
+
+    assert.match(plainOutput, /Top touch: 9/);
   });
 
   it('renderDashboardSummary should include status chips and metric cards', () => {
