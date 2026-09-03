@@ -1,5 +1,5 @@
 {
-  "name": "gitxray",
+  "name": "gitxray-cli",
   "version": "1.0.0",
   "description": "Git X-Ray — an X-ray machine for a codebase's history",
   "main": "dist/gitxray.js",
