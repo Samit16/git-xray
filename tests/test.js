@@ -349,8 +349,11 @@ describe('terminal output', () => {
     assert.match(panel, /Git X-Ray/i);
     assert.match(panel, /Churn Report/i);
     assert.match(panel, /\/repo\/project/);
-    assert.match(panel, /Files: 42/);
-    assert.match(panel, /Top touch: 9/);
+
+    const plainOutput = panel.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+    assert.match(plainOutput, /Files: 42/);
+
+    assert.match(plainOutput, /Top touch: 9/);
   });
 
   it('renderDashboardSummary should include status chips and metric cards', () => {
@@ -1237,9 +1240,11 @@ describe('tree-style rendering', () => {
     // Proportional progress bar characters
     assert.match(rendered, /█/);
     // Summary metrics
-    assert.match(rendered, /Total contributors: 2/);
-    assert.match(rendered, /Leading contributor: Samit/);
-    assert.match(rendered, /Metric: Commit touches across Git history/);
+    const plainRendered = stripAnsi(rendered);
+
+    assert.match(plainRendered, /Total contributors: 2/);
+    assert.match(plainRendered, /Leading contributor: Samit/);
+    assert.match(plainRendered, /Metric: Commit touches across Git history/);
   });
 
   it('renderContributorBreakdown should safely handle empty contributors', () => {
