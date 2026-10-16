@@ -20,14 +20,28 @@ const {
 const { resolveHead, getAllBranches } = require('../src/git/refs.js');
 const { walkCommits, diffTrees, flattenTree, computeAllDiffs } = require('../src/git/walker.js');
 const { computeChurn } = require('../src/analytics/churn.js');
-const { computeOwnership } = require('../src/analytics/ownership.js');
+const {
+  computeOwnership,
+  buildFileFolderList,
+  computeContributorBreakdown,
+  calculateContributionPercentages,
+} = require('../src/analytics/ownership.js');
 const { computeBusFactor } = require('../src/analytics/bus-factor.js');
 const { computeHotspots, filterBySeverity } = require('../src/analytics/hotspots.js');
-const { computeOverview } = require('../src/analytics/overview.js');
+const { computeOverview, computeActivitySeries } = require('../src/analytics/overview.js');
 const { analyzeComplexity, analyzeDirectoryComplexity, detectLanguage, stripComments } = require('../src/analytics/complexity.js');
 const { renderSummaryPanel, renderDashboardSummary, renderOverviewReport, formatTable, stripAnsi } = require('../src/outputs/terminal.js');
 const { renderFileDetail } = require('../src/outputs/file-detail.js');
-const { buildDashboardMenu, renderDashboardMenu } = require('../src/ui/dashboard.js');
+const { renderSparkline, formatSeverity, SPARK_CHARS } = require('../src/ui/core.js');
+const { renderMetricGrid } = require('../src/ui/components.js');
+const {
+  buildDashboardMenu,
+  renderDashboardMenu,
+  renderFileFolderList,
+  renderContributorBreakdown,
+  DashboardNavigator,
+  runInteractiveDashboard,
+} = require('../src/ui/dashboard.js');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -869,3 +883,695 @@ describe('error handling', () => {
     assert.equal(result, null);
   });
 });
+
+// ─── Individual Contribution & Navigation Tests ──────────────────────────────
+
+describe('individual contribution breakdown & percentages', () => {
+  it('calculateContributionPercentages should calculate correct percentages and sort descending', () => {
+    const contributors = [
+      { name: 'Bob', commits: 3 },
+      { name: 'Alice', commits: 9 },
+      { name: 'Charlie', commits: 6 },
+    ];
+    // Total commits: 18.
+    // Alice: 9 / 18 = 50.0%
+    // Charlie: 6 / 18 = 33.333%
+    // Bob: 3 / 18 = 16.666%
+    const results = calculateContributionPercentages(contributors);
+
+    assert.equal(results.length, 3);
+    assert.equal(results[0].name, 'Alice');
+    assert.equal(results[0].contribution, 9);
+    assert.ok(Math.abs(results[0].percentage - 50.0) < 0.001);
+
+    assert.equal(results[1].name, 'Charlie');
+    assert.equal(results[1].contribution, 6);
+    assert.ok(Math.abs(results[1].percentage - (6 / 18) * 100) < 0.001);
+
+    assert.equal(results[2].name, 'Bob');
+    assert.equal(results[2].contribution, 3);
+    assert.ok(Math.abs(results[2].percentage - (3 / 18) * 100) < 0.001);
+  });
+
+  it('calculateContributionPercentages should handle single contributor as 100%', () => {
+    const results = calculateContributionPercentages([{ name: 'Dev One', commits: 12 }]);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].percentage, 100);
+    assert.equal(results[0].contribution, 12);
+  });
+
+  it('calculateContributionPercentages should handle empty contributors safely', () => {
+    const results = calculateContributionPercentages([]);
+    assert.deepEqual(results, []);
+
+    const nullResults = calculateContributionPercentages(null);
+    assert.deepEqual(nullResults, []);
+  });
+
+  it('calculateContributionPercentages should handle zero totals safely without NaN', () => {
+    const contributors = [
+      { name: 'Dev A', commits: 0 },
+      { name: 'Dev B', commits: 0 },
+    ];
+    const results = calculateContributionPercentages(contributors, 0);
+    assert.equal(results.length, 2);
+    assert.equal(results[0].percentage, 0);
+    assert.equal(results[1].percentage, 0);
+    assert.ok(!Number.isNaN(results[0].percentage));
+    assert.ok(!Number.isNaN(results[1].percentage));
+  });
+
+  it('computeContributorBreakdown should compute file contribution accurately', () => {
+    const sampleOwnership = [
+      {
+        path: 'src/analytics/churn.js',
+        authors: [
+          { name: 'Alice', commits: 6, percentage: 60 },
+          { name: 'Bob', commits: 4, percentage: 40 },
+        ],
+      },
+      {
+        path: 'src/analytics/ownership.js',
+        authors: [
+          { name: 'Bob', commits: 5, percentage: 50 },
+          { name: 'Charlie', commits: 5, percentage: 50 },
+        ],
+      },
+    ];
+
+    const fileBreakdown = computeContributorBreakdown('src/analytics/churn.js', sampleOwnership, false);
+    assert.equal(fileBreakdown.type, 'file');
+    assert.equal(fileBreakdown.totalContribution, 10);
+    assert.equal(fileBreakdown.contributors.length, 2);
+    assert.equal(fileBreakdown.contributors[0].name, 'Alice');
+    assert.equal(fileBreakdown.contributors[0].percentage, 60);
+    assert.equal(fileBreakdown.contributors[1].name, 'Bob');
+    assert.equal(fileBreakdown.contributors[1].percentage, 40);
+  });
+
+  it('computeContributorBreakdown should aggregate folder contributions across all files', () => {
+    const sampleOwnership = [
+      {
+        path: 'src/analytics/churn.js',
+        authors: [
+          { name: 'Alice', commits: 6 },
+          { name: 'Bob', commits: 4 },
+        ],
+      },
+      {
+        path: 'src/analytics/ownership.js',
+        authors: [
+          { name: 'Bob', commits: 5 },
+          { name: 'Charlie', commits: 5 },
+        ],
+      },
+      {
+        path: 'README.md',
+        authors: [{ name: 'Dave', commits: 10 }],
+      },
+    ];
+
+    // For folder src/analytics:
+    // Alice: 6 commits (30%)
+    // Bob: 4 + 5 = 9 commits (45%)
+    // Charlie: 5 commits (25%)
+    // Total commits: 20
+    const folderBreakdown = computeContributorBreakdown('src/analytics', sampleOwnership, true);
+    assert.equal(folderBreakdown.type, 'folder');
+    assert.equal(folderBreakdown.totalContribution, 20);
+    assert.equal(folderBreakdown.contributors.length, 3);
+
+    // Sorted descending by contribution:
+    assert.equal(folderBreakdown.contributors[0].name, 'Bob');
+    assert.equal(folderBreakdown.contributors[0].contribution, 9);
+    assert.equal(folderBreakdown.contributors[0].percentage, 45);
+
+    assert.equal(folderBreakdown.contributors[1].name, 'Alice');
+    assert.equal(folderBreakdown.contributors[1].contribution, 6);
+    assert.equal(folderBreakdown.contributors[1].percentage, 30);
+
+    assert.equal(folderBreakdown.contributors[2].name, 'Charlie');
+    assert.equal(folderBreakdown.contributors[2].contribution, 5);
+    assert.equal(folderBreakdown.contributors[2].percentage, 25);
+  });
+
+  it('computeContributorBreakdown should handle non-existent path safely', () => {
+    const breakdown = computeContributorBreakdown('does/not/exist.js', []);
+    assert.equal(breakdown.totalContribution, 0);
+    assert.deepEqual(breakdown.contributors, []);
+  });
+});
+
+describe('file and folder list structure', () => {
+  it('buildFileFolderList should extract unique folders and files', () => {
+    const sampleOwnership = [
+      { path: 'src/analytics/churn.js' },
+      { path: 'src/analytics/ownership.js' },
+      { path: 'src/ui/dashboard.js' },
+      { path: 'README.md' },
+    ];
+
+    const list = buildFileFolderList(sampleOwnership);
+    assert.ok(Array.isArray(list));
+
+    const folders = list.filter((item) => item.type === 'folder').map((f) => f.path);
+    const files = list.filter((item) => item.type === 'file').map((f) => f.path);
+
+    assert.ok(folders.includes('src'));
+    assert.ok(folders.includes('src/analytics'));
+    assert.ok(folders.includes('src/ui'));
+
+    assert.ok(files.includes('src/analytics/churn.js'));
+    assert.ok(files.includes('src/analytics/ownership.js'));
+    assert.ok(files.includes('src/ui/dashboard.js'));
+    assert.ok(files.includes('README.md'));
+  });
+
+  it('buildFileFolderList should handle empty ownership data gracefully', () => {
+    const list = buildFileFolderList([]);
+    assert.deepEqual(list, []);
+  });
+});
+
+describe('interactive 3-state navigation', () => {
+  const sampleOwnership = [
+    {
+      path: 'src/index.js',
+      authors: [
+        { name: 'Dev A', commits: 8 },
+        { name: 'Dev B', commits: 2 },
+      ],
+    },
+    {
+      path: 'src/ui/dashboard.js',
+      authors: [
+        { name: 'Dev A', commits: 5 },
+      ],
+    },
+    {
+      path: 'README.md',
+      authors: [
+        { name: 'Dev B', commits: 4 },
+      ],
+    },
+  ];
+
+  it('should navigate through all three states: Menu -> File/Folder List -> Contributor View -> Back to List -> Back to Menu', () => {
+    const navigator = new DashboardNavigator({
+      repoPath: REPO_ROOT,
+      ownershipData: sampleOwnership,
+    });
+
+    // Initial state: State 1 (menu)
+    assert.equal(navigator.state, 'menu');
+    assert.equal(navigator.menuSelectedIndex, 0);
+
+    // Find index of ownership / individual contribution item in menu
+    const ownershipIndex = navigator.menuItems.findIndex((item) => item.id === 'ownership');
+    assert.ok(ownershipIndex >= 0);
+    navigator.menuSelectedIndex = ownershipIndex;
+
+    // Press Enter to inspect individual contribution
+    const enterRes = navigator.handleKey('\r');
+    assert.equal(enterRes.state, 'file_list');
+    // Now in State 2 (file_list)
+    assert.equal(navigator.state, 'file_list');
+    assert.ok(navigator.fileList.length > 0);
+    assert.equal(navigator.fileSelectedIndex, 0);
+
+    // Arrow down in file list
+    navigator.handleKey('\u001b[B'); // Down arrow
+    assert.equal(navigator.fileSelectedIndex, 1);
+    const selectedItem = navigator.fileList[1];
+
+    // Press Enter on the second file/folder item
+    const viewRes = navigator.handleKey('\r');
+    assert.equal(viewRes.state, 'contributor_view');
+    // Now in State 3 (contributor_view)
+    assert.equal(navigator.state, 'contributor_view');
+    assert.equal(navigator.selectedTarget.path, selectedItem.path);
+
+    // Verify contributor breakdown view rendering
+    const viewContent = navigator.getCurrentView();
+    assert.match(viewContent, /Contributors/i);
+    assert.match(viewContent, /\[e \/ Esc\] Back to File\/Folder List/i);
+
+    // Press 'e' in contributor view -> returns to State 2 (file_list)
+    const backToListRes = navigator.handleKey('e');
+    assert.equal(backToListRes.state, 'file_list');
+    assert.equal(navigator.state, 'file_list');
+    // Selection in file list MUST be preserved!
+    assert.equal(navigator.fileSelectedIndex, 1);
+
+    // Press 'e' in file_list -> returns to State 1 (menu)
+    const backToMenuRes = navigator.handleKey('e');
+    assert.equal(backToMenuRes.state, 'menu');
+    assert.equal(navigator.state, 'menu');
+    // Selection in main menu MUST be preserved!
+    assert.equal(navigator.menuSelectedIndex, ownershipIndex);
+  });
+
+  it('should support Esc key navigation: Contributor View -> File List -> Menu', () => {
+    const navigator = new DashboardNavigator({
+      repoPath: REPO_ROOT,
+      ownershipData: sampleOwnership,
+    });
+
+    const ownershipIndex = navigator.menuItems.findIndex((item) => item.id === 'ownership');
+    navigator.menuSelectedIndex = ownershipIndex;
+    navigator.handleKey('\r'); // Into file_list
+    navigator.handleKey('\u001b[B'); // Select second item
+    navigator.handleKey('\r'); // Into contributor_view
+    assert.equal(navigator.state, 'contributor_view');
+
+    // Esc returns to file_list
+    const escRes = navigator.handleKey('\u001b');
+    assert.equal(escRes.state, 'file_list');
+    assert.equal(navigator.state, 'file_list');
+    assert.equal(navigator.fileSelectedIndex, 1); // Preserves selection
+
+    // Esc in file_list returns to menu
+    const escMenuRes = navigator.handleKey('\u001b');
+    assert.equal(escMenuRes.state, 'menu');
+    assert.equal(navigator.state, 'menu');
+    assert.equal(navigator.menuSelectedIndex, ownershipIndex);
+  });
+
+  it('should support search and filtering in file explorer', () => {
+    const navigator = new DashboardNavigator({
+      repoPath: REPO_ROOT,
+      ownershipData: sampleOwnership,
+    });
+
+    const ownershipIndex = navigator.menuItems.findIndex((item) => item.id === 'ownership');
+    navigator.menuSelectedIndex = ownershipIndex;
+    navigator.handleKey('\r'); // Into file_list
+
+    // Press '/' to enter search mode
+    navigator.handleKey('/');
+    assert.equal(navigator.searchMode, true);
+
+    // Type 'dashboard'
+    for (const char of 'dashboard') {
+      navigator.handleKey(char);
+    }
+    assert.equal(navigator.searchQuery, 'dashboard');
+
+    const filtered = navigator.getFilteredFileList();
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0].path, 'src/ui/dashboard.js');
+
+    // Backspace removes last char
+    navigator.handleKey('\u0008');
+    assert.equal(navigator.searchQuery, 'dashboar');
+
+    // Enter confirms query and returns to navigation in filtered list
+    navigator.handleKey('\r');
+    assert.equal(navigator.searchMode, false);
+    assert.equal(navigator.searchQuery, 'dashboar');
+
+    // Esc clears search query and restores full list
+    navigator.handleKey('\u001b');
+    assert.equal(navigator.searchQuery, '');
+    assert.equal(navigator.getFilteredFileList().length, navigator.fileList.length);
+  });
+
+  it('should support arrow key wrap-around and quit key in navigator', () => {
+    const navigator = new DashboardNavigator({
+      repoPath: REPO_ROOT,
+      ownershipData: sampleOwnership,
+    });
+
+    // Arrow up from 0 wraps to last item
+    navigator.handleKey('\u001b[A'); // Up arrow
+    assert.equal(navigator.menuSelectedIndex, navigator.menuItems.length - 1);
+
+    // Arrow down wraps back to 0
+    navigator.handleKey('\u001b[B'); // Down arrow
+    assert.equal(navigator.menuSelectedIndex, 0);
+
+    // Pressing 'q' returns exit action
+    const exitRes = navigator.handleKey('q');
+    assert.equal(exitRes.action, 'exit');
+  });
+});
+
+describe('tree-style rendering', () => {
+  it('renderContributorBreakdown should format tree connectors and proportional progress bars', () => {
+    const rendered = renderContributorBreakdown({
+      target: 'src/analytics',
+      type: 'folder',
+      contributors: [
+        { name: 'Samit', contribution: 8, commits: 8, percentage: 80.0 },
+        { name: 'Alice', contribution: 2, commits: 2, percentage: 20.0 },
+      ],
+      totalContribution: 10,
+      repoPath: REPO_ROOT,
+    });
+
+    assert.match(rendered, /Contributors/i);
+    assert.match(rendered, /src\/analytics/);
+    assert.match(rendered, /Samit/);
+    assert.match(rendered, /80\.0%/);
+    assert.match(rendered, /Alice/);
+    assert.match(rendered, /20\.0%/);
+    // Tree characters
+    assert.match(rendered, /├──|└──/);
+    // Proportional progress bar characters
+    assert.match(rendered, /█/);
+    // Summary metrics
+    const plainRendered = stripAnsi(rendered);
+
+    assert.match(plainRendered, /Total contributors: 2/);
+    assert.match(plainRendered, /Leading contributor: Samit/);
+    assert.match(plainRendered, /Metric: Commit touches across Git history/);
+  });
+
+  it('renderContributorBreakdown should safely handle empty contributors', () => {
+    const rendered = renderContributorBreakdown({
+      target: 'empty/folder',
+      type: 'folder',
+      contributors: [],
+      totalContribution: 0,
+      repoPath: REPO_ROOT,
+    });
+
+    assert.match(rendered, /Contributors/i);
+    assert.match(rendered, /no contributor data available/i);
+  });
+
+  it('renderFileFolderList should render list with icons and selection marker', () => {
+    const items = [
+      { type: 'folder', path: 'src' },
+      { type: 'file', path: 'src/index.js' },
+    ];
+    const rendered = renderFileFolderList({
+      items,
+      selectedIndex: 1,
+      repoPath: REPO_ROOT,
+    });
+
+    assert.match(rendered, /Individual Contributions/i);
+    assert.match(rendered, /src\/index\.js/);
+    assert.match(rendered, /▶/);
+    assert.match(rendered, /Navigation: \[↑ \/ ↓\] Navigate/i);
+  });
+});
+
+describe('edge cases and path handling', () => {
+  it('should handle unusual paths with spaces, unicode, and deep directories', () => {
+    const weirdData = [
+      {
+        path: 'src/assets/my test file with spaces.js',
+        authors: [{ name: 'Space Author', commits: 5 }],
+      },
+      {
+        path: 'src/i18n/üñíçødé/файл.ts',
+        authors: [{ name: 'Unicode Author', commits: 3 }],
+      },
+      {
+        path: 'a/very/deeply/nested/directory/structure/file.js',
+        authors: [{ name: 'Deep Author', commits: 7 }],
+      },
+    ];
+
+    const list = buildFileFolderList(weirdData);
+    assert.ok(list.some((item) => item.path === 'src/assets/my test file with spaces.js'));
+    assert.ok(list.some((item) => item.path === 'src/i18n/üñíçødé/файл.ts'));
+    assert.ok(list.some((item) => item.path === 'a/very/deeply/nested/directory/structure'));
+
+    const breakdownSpaces = computeContributorBreakdown('src/assets/my test file with spaces.js', weirdData, false);
+    assert.equal(breakdownSpaces.contributors[0].name, 'Space Author');
+    assert.equal(breakdownSpaces.contributors[0].percentage, 100);
+
+    const breakdownUnicodeFolder = computeContributorBreakdown('src/i18n/üñíçødé', weirdData, true);
+    assert.equal(breakdownUnicodeFolder.contributors[0].name, 'Unicode Author');
+    assert.equal(breakdownUnicodeFolder.contributors[0].percentage, 100);
+  });
+
+  it('percentage calculations should sum to approximately 100%', () => {
+    const contributors = [
+      { name: 'Member A', commits: 19 },
+      { name: 'Member B', commits: 13 },
+      { name: 'Member C', commits: 7 },
+      { name: 'Member D', commits: 4 },
+      { name: 'Member E', commits: 2 },
+    ];
+    const results = calculateContributionPercentages(contributors);
+    const sum = results.reduce((acc, c) => acc + c.percentage, 0);
+    assert.ok(Math.abs(sum - 100) < 0.001);
+
+    // Verify descending order
+    for (let i = 0; i < results.length - 1; i++) {
+      assert.ok(results[i].contribution >= results[i + 1].contribution);
+    }
+  });
+
+  it('runInteractiveDashboard should gracefully support non-interactive stdout', () => {
+    let captured = '';
+    const fakeStdout = {
+      isTTY: false,
+      write: (data) => {
+        captured += data;
+      },
+    };
+    const fakeStdin = {
+      isTTY: false,
+    };
+
+    const nav = runInteractiveDashboard({
+      repoPath: REPO_ROOT,
+      commits: [],
+      diffs: new Map(),
+      input: fakeStdin,
+      output: fakeStdout,
+    });
+
+    assert.ok(nav instanceof DashboardNavigator);
+    assert.match(captured, /Non-interactive terminal detected/i);
+  });
+
+  it('renderFileDetail should support array author format from computeOwnership', () => {
+    const detail = renderFileDetail({
+      file: 'src/analytics/ownership.js',
+      hotspot: {
+        riskScore: 65,
+        severity: 'MEDIUM',
+        churn: 2,
+        ownershipConcentration: 75,
+        primaryRisk: 'Moderate churn',
+      },
+      ownership: {
+        primaryAuthor: { name: 'Alice', percentage: 75 },
+        authors: [
+          { name: 'Alice', commits: 6, percentage: 75 },
+          { name: 'Bob', commits: 2, percentage: 25 },
+        ],
+        distinctAuthors: 2,
+        lastTouched: 1725000000,
+      },
+      complexity: {
+        score: 45,
+        complexity: 'MEDIUM',
+        branches: 12,
+        maxDepth: 3,
+        functions: 5,
+        language: 'JavaScript',
+      },
+      churn: { touches: 8 },
+    });
+
+    assert.match(detail, /File Risk Deep Dive/i);
+    assert.match(detail, /src\/analytics\/ownership\.js/);
+    assert.match(detail, /Alice/);
+    assert.match(detail, /Bob/);
+    assert.match(detail, /75%/);
+    assert.match(detail, /25%/);
+    assert.match(detail, /Metric: Commit touches across Git history/i);
+  });
+
+  it('DashboardNavigator should navigate into file_detail and return with e and Esc', () => {
+    const sampleOwnership = [
+      {
+        path: 'src/index.js',
+        authors: [
+          { name: 'Dev A', commits: 8 },
+          { name: 'Dev B', commits: 2 },
+        ],
+      },
+    ];
+
+    const navigator = new DashboardNavigator({
+      repoPath: REPO_ROOT,
+      ownershipData: sampleOwnership,
+    });
+
+    const ownershipIndex = navigator.menuItems.findIndex((item) => item.id === 'ownership');
+    navigator.menuSelectedIndex = ownershipIndex;
+    navigator.handleKey('\r'); // Into file_list
+    assert.equal(navigator.state, 'file_list');
+
+    // Find the file item in fileList
+    const fileIdx = navigator.fileList.findIndex((item) => item.type === 'file');
+    assert.ok(fileIdx >= 0);
+    navigator.fileSelectedIndex = fileIdx;
+
+    // Press 'd' in file_list on a file -> transitions to file_detail
+    const detailRes = navigator.handleKey('d');
+    assert.equal(detailRes.state, 'file_detail');
+    assert.equal(navigator.state, 'file_detail');
+    const detailView = navigator.getCurrentView();
+    assert.match(detailView, /File Risk Deep Dive/i);
+    assert.match(detailView, /src\/index\.js/);
+
+    // Press 'e' in file_detail -> returns to file_list
+    const backRes = navigator.handleKey('e');
+    assert.equal(backRes.state, 'file_list');
+    assert.equal(navigator.state, 'file_list');
+    assert.equal(navigator.fileSelectedIndex, fileIdx); // Preserves selection
+
+    // Enter contributor_view
+    navigator.handleKey('\r');
+    assert.equal(navigator.state, 'contributor_view');
+
+    // Press 'd' in contributor_view -> transitions to file_detail
+    const detailFromContrib = navigator.handleKey('d');
+    assert.equal(detailFromContrib.state, 'file_detail');
+    assert.equal(navigator.state, 'file_detail');
+
+    // Press 'Esc' in file_detail -> returns to contributor_view
+    const backToContrib = navigator.handleKey('\u001b');
+    assert.equal(backToContrib.state, 'contributor_view');
+    assert.equal(navigator.state, 'contributor_view');
+  });
+
+  it('should support CLI detail command for single file', () => {
+    const result = spawnSync(process.execPath, ['src/index.js', '.', 'detail', 'src/index.js'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /File Risk Deep Dive/i);
+    assert.match(result.stdout, /src\/index\.js/);
+
+    // Test JSON output
+    const jsonResult = spawnSync(process.execPath, ['src/index.js', '.', 'detail', 'src/index.js', '--json'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+
+    assert.equal(jsonResult.status, 0);
+    const parsed = JSON.parse(jsonResult.stdout);
+    assert.equal(parsed.file, 'src/index.js');
+    assert.ok(parsed.ownership);
+  });
+});
+
+// ─── Cyber Cyan Visual Upgrade Tests ─────────────────────────────────────────
+
+describe('cyber cyan visual upgrade', () => {
+  const head = resolveHead(GIT_DIR);
+  const { commits } = walkCommits(GIT_DIR, [head.hash]);
+  const diffs = computeAllDiffs(GIT_DIR, commits);
+
+  it('renderSparkline should format values into proportional unicode block levels', () => {
+    const spark = renderSparkline([0, 1, 2, 3, 4, 5, 6, 7]);
+    const plain = stripAnsi(spark);
+    assert.equal(plain.length, 8);
+    assert.equal(plain, ' ▂▃▄▅▆▇█');
+  });
+
+  it('renderSparkline should handle flat and all-zero data gracefully', () => {
+    const zeros = renderSparkline([0, 0, 0, 0]);
+    assert.equal(stripAnsi(zeros), '    ');
+
+    const equal = renderSparkline([10, 10, 10]);
+    assert.equal(stripAnsi(equal), '▅▅▅');
+
+    const empty = renderSparkline([]);
+    assert.equal(empty, '');
+  });
+
+  it('renderSparkline should support ascii fallback mode', () => {
+    const spark = renderSparkline([0, 5, 10], { ascii: true });
+    const plain = stripAnsi(spark);
+    assert.equal(plain.length, 3);
+    assert.match(plain, /^[_.\-=#]+$/);
+  });
+
+  it('formatSeverity should render clear textual severity badges', () => {
+    assert.match(stripAnsi(formatSeverity('CRITICAL')), /^\[CRITICAL\]$/);
+    assert.match(stripAnsi(formatSeverity('HIGH')), /^\[HIGH\]$/);
+    assert.match(stripAnsi(formatSeverity('MEDIUM')), /^\[MEDIUM\]$/);
+    assert.match(stripAnsi(formatSeverity('LOW')), /^\[LOW\]$/);
+  });
+
+  it('computeActivitySeries should partition commits into discrete intervals', () => {
+    const fakeCommits = [
+      { hash: 'c1', author: { timestamp: 1000 } },
+      { hash: 'c2', author: { timestamp: 2000 } },
+      { hash: 'c3', author: { timestamp: 3000 } },
+      { hash: 'c4', author: { timestamp: 7000 } },
+    ];
+    const series = computeActivitySeries(fakeCommits, new Map(), 7);
+    assert.ok(series);
+    assert.equal(series.intervals, 7);
+    assert.equal(series.commitActivity.length, 7);
+    assert.equal(series.fileChurn.length, 7);
+    assert.equal(series.oldestTimestamp, 1000);
+    assert.equal(series.newestTimestamp, 7000);
+  });
+
+  it('computeActivitySeries should return null safely for insufficient history', () => {
+    assert.equal(computeActivitySeries([], new Map()), null);
+    assert.equal(computeActivitySeries([{ hash: '1', author: { timestamp: 100 } }], new Map()), null);
+    assert.equal(computeActivitySeries([{ hash: '1', author: { timestamp: 100 } }, { hash: '2', author: { timestamp: 100 } }], new Map()), null);
+  });
+
+  it('renderMetricGrid should render 2-column layout and collapse to 1-column on narrow widths', () => {
+    const metrics = [
+      { label: 'Files', value: '1,284' },
+      { label: 'Contributors', value: '12' },
+      { label: 'Risk Score', value: '68 / 100 [HIGH]' },
+      { label: 'Hotspots', value: '14' },
+    ];
+
+    const standard = renderMetricGrid({
+      title: 'REPOSITORY INTELLIGENCE',
+      repoPath: '/workspace/project',
+      branch: 'main',
+      metrics,
+      width: 76,
+    });
+    assert.match(standard, /REPOSITORY INTELLIGENCE/);
+    assert.match(standard, /FILES/);
+    assert.match(standard, /CONTRIBUTORS/);
+    assert.match(standard, /1,284/);
+    assert.match(standard, /12/);
+    assert.match(standard, /┬|┼/);
+
+    const narrow = renderMetricGrid({
+      title: 'REPOSITORY INTELLIGENCE',
+      repoPath: '/workspace/project',
+      branch: 'main',
+      metrics,
+      width: 48,
+    });
+    assert.match(narrow, /FILES/);
+    assert.match(narrow, /1,284/);
+    assert.doesNotMatch(narrow, /┬|┼/);
+  });
+
+  it('overview report should integrate activity sparkline and clear risk severity', () => {
+    const overview = computeOverview(REPO_ROOT, commits, diffs, 80);
+    const report = renderOverviewReport(overview);
+
+    assert.match(report, /REPOSITORY INTELLIGENCE/);
+    assert.match(report, /Repository Activity/);
+    assert.match(report, /Recent commit activity/);
+    assert.match(report, /File churn/);
+    assert.match(report, /\[(CRITICAL|HIGH|MEDIUM|LOW)\]/);
+  });
+});
+

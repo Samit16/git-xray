@@ -11,9 +11,23 @@ const colorEnabled =
   process.env.TERM !== 'dumb' &&
   (process.stdout.isTTY !== false || process.env.FORCE_COLOR === '1');
 
+const ANSI_CODES = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  white: '\x1b[37m',
+  gray: '\x1b[90m',
+};
+
 /**
- * Apply ANSI text styling.
- * @param {string} styleName - color/style name supported by Node's util.styleText or basic ansi
+ * Apply ANSI text styling with zero dependencies and safe fallbacks.
+ * @param {string} styleName - color/style name
  * @param {string} text
  */
 function style(styleName, text) {
@@ -22,8 +36,12 @@ function style(styleName, text) {
     try {
       return util.styleText(styleName, String(text));
     } catch {
-      // fallback if style name is unknown in util.styleText
+      // fallback if style name is custom or unhandled
     }
+  }
+  const code = ANSI_CODES[styleName];
+  if (code) {
+    return `${code}${text}${ANSI_CODES.reset}`;
   }
   return String(text);
 }
@@ -140,16 +158,66 @@ const BOX = {
  * Status badges & icons.
  */
 const BADGES = {
-  critical: () => style('bold', style('red', '[ CRITICAL ]')),
-  high: () => style('bold', style('yellow', '[ HIGH ]')),
-  medium: () => style('bold', style('cyan', '[ MEDIUM ]')),
-  low: () => style('bold', style('green', '[ LOW ]')),
-  healthy: () => style('bold', style('green', '[ HEALTHY ]')),
-  warning: () => style('bold', style('yellow', '[ WARNING ]')),
-  alert: () => style('bold', style('red', '[ ALERT ]')),
-  live: () => style('bold', style('green', '[ LIVE ]')),
-  info: () => style('bold', style('cyan', '[ INFO ]')),
+  critical: () => style('bold', style('red', '[CRITICAL]')),
+  high: () => style('bold', style('yellow', '[HIGH]')),
+  medium: () => style('bold', style('cyan', '[MEDIUM]')),
+  low: () => style('bold', style('green', '[LOW]')),
+  healthy: () => style('bold', style('green', '[HEALTHY]')),
+  warning: () => style('bold', style('yellow', '[WARNING]')),
+  alert: () => style('bold', style('red', '[ALERT]')),
+  live: () => style('bold', style('green', '[LIVE]')),
+  info: () => style('bold', style('cyan', '[INFO]')),
 };
+
+/**
+ * Format a risk severity badge with text label visible even without color.
+ * @param {string} severity - 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+ */
+function formatSeverity(severity) {
+  const sev = String(severity || '').toUpperCase();
+  if (sev === 'CRITICAL') return style('bold', style('red', '[CRITICAL]'));
+  if (sev === 'HIGH') return style('bold', style('yellow', '[HIGH]'));
+  if (sev === 'MEDIUM') return style('bold', style('cyan', '[MEDIUM]'));
+  if (sev === 'LOW') return style('bold', style('green', '[LOW]'));
+  return `[${sev || 'UNKNOWN'}]`;
+}
+
+const SPARK_CHARS = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+const SPARK_ASCII = ['_', '.', '-', '=', '#'];
+
+/**
+ * Render compact Unicode block sparkline from time-series data.
+ * @param {number[]} values
+ * @param {Object} [opts]
+ * @param {string} [opts.color='cyan']
+ * @param {number} [opts.min]
+ * @param {number} [opts.max]
+ * @param {boolean} [opts.ascii=false]
+ * @returns {string}
+ */
+function renderSparkline(values, opts = {}) {
+  if (!Array.isArray(values) || values.length === 0) return '';
+  const color = opts.color || 'cyan';
+  const isAscii = opts.ascii || (process.env.TERM === 'dumb');
+  const palette = isAscii ? SPARK_ASCII : SPARK_CHARS;
+
+  const min = opts.min !== undefined ? opts.min : Math.min(...values);
+  const max = opts.max !== undefined ? opts.max : Math.max(...values);
+
+  if (max === min) {
+    const flatChar = min === 0 ? palette[0] : palette[Math.floor(palette.length / 2)];
+    return style(color, flatChar.repeat(values.length));
+  }
+
+  const chars = values.map((val) => {
+    const clamped = Math.max(min, Math.min(max, val));
+    const ratio = (clamped - min) / (max - min);
+    const idx = Math.min(palette.length - 1, Math.floor(ratio * palette.length));
+    return palette[idx];
+  });
+
+  return style(color, chars.join(''));
+}
 
 /**
  * Format a progress / gauge bar.
@@ -185,5 +253,8 @@ module.exports = {
   truncate,
   BOX,
   BADGES,
+  formatSeverity,
+  SPARK_CHARS,
+  renderSparkline,
   renderBar,
 };

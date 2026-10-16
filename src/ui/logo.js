@@ -27,9 +27,9 @@ function renderLogo(opts = {}) {
   const showSubtitle = opts.showSubtitle !== false;
 
   if (termWidth < 50) {
-    const lines = [style('bold', style('green', COMPACT_WORDMARK[0]))];
+    const lines = [style('bold', style('cyan', COMPACT_WORDMARK[0]))];
     if (showSubtitle) {
-      lines.push(style('dim', '    Zero-dependency history intelligence'));
+      lines.push(style('dim', '    Zero-dependency repository intelligence'));
     }
     return lines.join('\n');
   }
@@ -39,14 +39,14 @@ function renderLogo(opts = {}) {
     : String(WORDMARK_LINES).split('\n');
 
   const coloredWordmark = lines
-    .map((line) => style('bold', style('green', line)))
+    .map((line) => style('bold', style('cyan', line)))
     .join('\n');
 
   if (!showSubtitle) {
     return coloredWordmark;
   }
 
-  const subtitle = `  ${style('dim', 'Zero-dependency codebase forensics')} ${style('cyan', 'v1.0.0')}`;
+  const subtitle = `  ${style('bold', style('cyan', 'GIT X-RAY'))} ${style('dim', '· Zero-dependency repository intelligence')} ${style('cyan', 'v1.0.0')}`;
   return `${coloredWordmark}\n${subtitle}`;
 }
 

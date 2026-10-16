@@ -33,6 +33,9 @@ function parseCLI() {
     knowledge: 'bus-factor',
     changes: 'churn',
     history: 'log',
+    contribution: 'ownership',
+    contributions: 'ownership',
+    file: 'detail',
   };
 
   const VALID_COMMANDS = [
@@ -44,6 +47,7 @@ function parseCLI() {
     'hotspots',
     'complexity',
     'interactive',
+    'detail',
     ...Object.keys(COMMAND_ALIASES),
   ];
 
@@ -74,7 +78,7 @@ function parseCLI() {
     process.exit(0);
   }
 
-  let repoPath, rawCommand;
+  let repoPath, rawCommand, targetFile;
 
   if (positionals.length === 1) {
     // Could be: gitxray <command> OR gitxray <path>
@@ -86,15 +90,20 @@ function parseCLI() {
       repoPath = positionals[0];
       rawCommand = process.stdout.isTTY && !values.json ? 'interactive' : 'overview';
     }
-  } else {
+  } else if (positionals.length === 2) {
     // gitxray <path> <command>
     repoPath = positionals[0];
     rawCommand = positionals[1];
+  } else {
+    // gitxray <path> <command> <targetFile>
+    repoPath = positionals[0];
+    rawCommand = positionals[1];
+    targetFile = positionals[2];
   }
 
   if (!VALID_COMMANDS.includes(rawCommand)) {
     console.error(`Unknown command: "${rawCommand}"`);
-    console.error('Available commands: overview (health), hotspots (risk), bus-factor (knowledge), churn (changes), complexity, log (history), interactive');
+    console.error('Available commands: overview (health), hotspots (risk), bus-factor (knowledge), churn (changes), complexity, log (history), detail (file), interactive');
     process.exit(1);
   }
 
@@ -110,6 +119,7 @@ function parseCLI() {
   return {
     command,
     repoPath,
+    targetFile,
     options: {
       json: values.json,
       threshold,
