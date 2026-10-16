@@ -8,34 +8,34 @@ const { computeChurn } = require('./analytics/churn.js');
 const { computeOwnership } = require('./analytics/ownership.js');
 const { computeBusFactor } = require('./analytics/bus-factor.js');
 const { computeHotspots } = require('./analytics/hotspots.js');
-const { computeOverview } = require('./analytics/overview.js');
-const { analyzeDirectoryComplexity } = require('./analytics/complexity.js');
+const { computeOverview, computeActivitySeries } = require('./analytics/overview.js');
+const { analyzeComplexity, analyzeDirectoryComplexity } = require('./analytics/complexity.js');
+const { normalizePath } = require('./analytics/ownership.js');
 const { parseCLI } = require('./cli/args.js');
 const { formatJSON } = require('./outputs/json.js');
 const {
   style,
   formatTable,
   renderDashboardSummary,
-  printHeader,
   printWarning,
   printSuccess,
   formatDate,
   colorPercent,
-  formatPercent,
   renderHotspotsReport,
   renderComplexityReport,
   renderOverviewReport,
   renderKnowledgeReport,
   renderChurnReport,
 } = require('./outputs/terminal.js');
-const { buildDashboardMenu, renderDashboardMenu, runInteractiveDashboard } = require('./ui/dashboard.js');
+const { renderFileDetail } = require('./outputs/file-detail.js');
+const { runInteractiveDashboard } = require('./ui/dashboard.js');
 
 /**
  * Main entry point — wires the full pipeline:
  * CLI args → .git locator → ref resolver → commit walker → tree differ → analytics → output
  */
 function main() {
-  const { command, repoPath, options } = parseCLI();
+  const { command, repoPath, targetFile, options } = parseCLI();
 
   try {
     // Step 1: Locate .git
@@ -96,6 +96,7 @@ function main() {
       case 'interactive': {
         const diffs = computeAllDiffs(gitDir, commits);
         const overview = computeOverview(repoPath, commits, diffs, options.threshold);
+        const ownershipData = computeOwnership(commits, diffs);
         runInteractiveDashboard({
           repoPath,
           commits,
@@ -103,6 +104,7 @@ function main() {
           diffs,
           options,
           overview,
+          ownershipData,
           onSelect: (selectedCommand) => {
             if (selectedCommand === 'overview') handleOverview(repoPath, commits, diffs, options);
             else if (selectedCommand === 'hotspots') handleHotspots(repoPath, commits, diffs, options);
@@ -133,6 +135,11 @@ function main() {
       case 'complexity':
         handleComplexity(repoPath, options);
         break;
+      case 'detail': {
+        const diffs = computeAllDiffs(gitDir, commits);
+        handleFileDetail(repoPath, commits, diffs, targetFile, options);
+        break;
+      }
     }
   } catch (err) {
     if (err instanceof GitXRayError) {
@@ -217,13 +224,14 @@ function handleLog(repoPath, commits, packedCount, options) {
 
 function handleChurn(repoPath, commits, diffs, options) {
   const churnData = computeChurn(commits, diffs);
+  const activitySeries = computeActivitySeries(commits, diffs, 7);
 
   if (options.json) {
     console.log(formatJSON({ churn: churnData, totalFiles: churnData.length }));
     return;
   }
 
-  console.log(renderChurnReport(churnData, commits.length, repoPath));
+  console.log(renderChurnReport(churnData, commits.length, repoPath, activitySeries));
   printSuccess(`${churnData.length} files tracked across ${commits.length} commits`);
 }
 
@@ -374,6 +382,52 @@ function handleComplexity(repoPath, options) {
   }
 
   printSuccess(`Structural analysis complete: ${complexities.length} files analyzed`);
+}
+
+function handleFileDetail(repoPath, commits, diffs, targetFile, options) {
+  const ownershipData = computeOwnership(commits, diffs);
+  const hotspots = computeHotspots(commits, diffs);
+  const normTarget = normalizePath(targetFile || hotspots[0]?.file || ownershipData[0]?.path || '');
+
+  const ownershipEntry = ownershipData.find((e) => normalizePath(e.path) === normTarget);
+  const hotspotEntry = hotspots.find((h) => normalizePath(h.file) === normTarget);
+
+  let complexityEntry = null;
+  try {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const fullPath = path.resolve(repoPath, normTarget);
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+      complexityEntry = analyzeComplexity(fullPath);
+    }
+  } catch {
+    // ignore
+  }
+
+  const churnEntry = hotspotEntry ? { touches: hotspotEntry.churn } : null;
+
+  if (options.json) {
+    console.log(
+      formatJSON({
+        file: normTarget,
+        hotspot: hotspotEntry || null,
+        ownership: ownershipEntry || null,
+        complexity: complexityEntry || null,
+        churn: churnEntry || null,
+      })
+    );
+    return;
+  }
+
+  console.log(
+    renderFileDetail({
+      file: normTarget,
+      hotspot: hotspotEntry,
+      ownership: ownershipEntry,
+      complexity: complexityEntry,
+      churn: churnEntry,
+    })
+  );
 }
 
 main();

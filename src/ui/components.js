@@ -70,6 +70,111 @@ function renderPanel({
   return result.join('\n');
 }
 
+const path = require('node:path');
+
+/**
+ * Render responsive 2-column metric cards grid (collapses to 1-col on narrow terminals).
+ * @param {Object} opts
+ * @param {string} [opts.title='REPOSITORY INTELLIGENCE']
+ * @param {string} opts.repoPath
+ * @param {string} [opts.branch='main']
+ * @param {string} [opts.subtitle]
+ * @param {Array<{label: string, value: string|number, color?: string, desc?: string}>} opts.metrics
+ * @param {number} [opts.width]
+ * @param {string} [opts.borderColor='cyan']
+ * @returns {string}
+ */
+function renderMetricGrid({
+  title = 'REPOSITORY INTELLIGENCE',
+  repoPath = process.cwd(),
+  branch = 'main',
+  subtitle,
+  metrics = [],
+  width,
+  borderColor = 'cyan',
+}) {
+  const b = BOX.rounded;
+  const termWidth = getTerminalWidth(80);
+  const targetWidth = Math.min(termWidth - 2, width || Math.max(54, termWidth - 4));
+  const innerWidth = targetWidth - 2;
+  const isSingleCol = targetWidth < 62;
+
+  const lines = [];
+
+  // Top border
+  const titleText = ` ${title} `;
+  const topAvailable = innerWidth - visibleLength(titleText);
+  const topBorder = style(
+    borderColor,
+    `${b.tl}${b.h}${titleText}${b.h.repeat(Math.max(0, topAvailable - 1))}${b.tr}`
+  );
+  lines.push(topBorder);
+
+  // Repository & Branch info
+  const repoName = path.basename(repoPath) || repoPath;
+  const repoLine = ` Repository: ${style('bold', repoName)}`;
+  lines.push(`${style(borderColor, b.v)}${padRight(truncate(repoLine, innerWidth), innerWidth)}${style(borderColor, b.v)}`);
+
+  const branchLine = ` Branch: ${style('bold', branch)}`;
+  lines.push(`${style(borderColor, b.v)}${padRight(truncate(branchLine, innerWidth), innerWidth)}${style(borderColor, b.v)}`);
+
+  if (subtitle) {
+    const subLine = ` ${subtitle}`;
+    lines.push(`${style(borderColor, b.v)}${padRight(truncate(subLine, innerWidth), innerWidth)}${style(borderColor, b.v)}`);
+  }
+
+  if (isSingleCol) {
+    // 1-column layout for narrow terminals
+    for (let i = 0; i < metrics.length; i++) {
+      lines.push(style(borderColor, `${b.vl}${b.h.repeat(innerWidth)}${b.vr}`));
+      const m = metrics[i];
+      const lbl = ` ${style('bold', style('dim', m.label.toUpperCase()))}`;
+      const valStr = m.color ? style(m.color, String(m.value)) : style('bold', String(m.value));
+      const val = ` ${valStr}${m.desc ? style('dim', ` (${m.desc})`) : ''}`;
+      lines.push(`${style(borderColor, b.v)}${padRight(truncate(lbl, innerWidth), innerWidth)}${style(borderColor, b.v)}`);
+      lines.push(`${style(borderColor, b.v)}${padRight(truncate(val, innerWidth), innerWidth)}${style(borderColor, b.v)}`);
+    }
+    lines.push(style(borderColor, `${b.bl}${b.h.repeat(innerWidth)}${b.br}`));
+  } else {
+    // 2-column layout
+    const col1 = Math.floor((innerWidth - 1) / 2);
+    const col2 = innerWidth - 1 - col1;
+
+    // Header to grid divider
+    lines.push(style(borderColor, `${b.vl}${b.h.repeat(col1)}${b.ht}${b.h.repeat(col2)}${b.vr}`));
+
+    for (let i = 0; i < metrics.length; i += 2) {
+      if (i > 0) {
+        lines.push(style(borderColor, `${b.vl}${b.h.repeat(col1)}${b.x}${b.h.repeat(col2)}${b.vr}`));
+      }
+      const m1 = metrics[i];
+      const m2 = metrics[i + 1];
+
+      // Labels row
+      const l1 = ` ${style('bold', style('dim', m1.label.toUpperCase()))}`;
+      const l2 = m2 ? ` ${style('bold', style('dim', m2.label.toUpperCase()))}` : '';
+      const row1 = `${style(borderColor, b.v)}${padRight(truncate(l1, col1), col1)}${style(borderColor, b.v)}${padRight(truncate(l2, col2), col2)}${style(borderColor, b.v)}`;
+      lines.push(row1);
+
+      // Values row
+      const v1Str = m1.color ? style(m1.color, String(m1.value)) : style('bold', String(m1.value));
+      const v1 = ` ${v1Str}${m1.desc ? style('dim', ` [${m1.desc}]`) : ''}`;
+      let v2 = '';
+      if (m2) {
+        const v2Str = m2.color ? style(m2.color, String(m2.value)) : style('bold', String(m2.value));
+        v2 = ` ${v2Str}${m2.desc ? style('dim', ` [${m2.desc}]`) : ''}`;
+      }
+      const row2 = `${style(borderColor, b.v)}${padRight(truncate(v1, col1), col1)}${style(borderColor, b.v)}${padRight(truncate(v2, col2), col2)}${style(borderColor, b.v)}`;
+      lines.push(row2);
+    }
+
+    // Bottom border
+    lines.push(style(borderColor, `${b.bl}${b.h.repeat(col1)}${b.hb}${b.h.repeat(col2)}${b.br}`));
+  }
+
+  return lines.join('\n');
+}
+
 /**
  * Render key-value metric summary grid inside a panel.
  * @param {Object} opts
@@ -89,13 +194,16 @@ function renderExecutiveCard({
   const statusBadge = BADGES[status.toLowerCase()] ? BADGES[status.toLowerCase()]() : `[ ${status} ]`;
   
   // Header line
-  innerLines.push(` ${style('bold', style('green', 'GIT X-RAY'))}  ${style('dim', '•')}  ${style('bold', title)}  ${statusBadge}`);
+  innerLines.push(` ${style('bold', style('cyan', 'GIT X-RAY'))}  ${style('dim', '•')}  ${style('bold', title)}  ${statusBadge}`);
   innerLines.push(` ${style('dim', 'repo:')} ${style('bold', repoPath)}`);
   innerLines.push('');
 
   // Metric pills formatted cleanly
   const pillStr = metrics
     .map((m) => {
+      if (typeof m === 'string') {
+        return m;
+      }
       const val = m.color ? style(m.color, String(m.value)) : style('bold', String(m.value));
       return `${style('dim', m.label)}: ${val}`;
     })
@@ -179,6 +287,7 @@ function renderSection(title, icon = '▶') {
 module.exports = {
   renderPanel,
   renderExecutiveCard,
+  renderMetricGrid,
   renderTable,
   renderSection,
 };

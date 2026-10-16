@@ -21,7 +21,7 @@ const { computeHotspots } = require('./hotspots.js');
  * @param {number} threshold - bus factor threshold (default: 80)
  * @returns {ExecutiveOverview}
  */
-function computeOverview(repoPath, commits, diffs, threshold = 80) {
+function computeOverview(repoPath, commits, diffs, threshold = 80, branch = null) {
   const churnList = computeChurn(commits, diffs);
   const ownershipList = computeOwnership(commits, diffs);
   const busFactorList = computeBusFactor(ownershipList, threshold);
@@ -97,13 +97,36 @@ function computeOverview(repoPath, commits, diffs, threshold = 80) {
   else if (riskScore >= 50) overallRisk = 'HIGH';
   else if (riskScore >= 25) overallRisk = 'MEDIUM';
 
+  let branchName = branch;
+  if (!branchName) {
+    try {
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const headFile = path.join(repoPath, '.git', 'HEAD');
+      if (fs.existsSync(headFile)) {
+        const content = fs.readFileSync(headFile, 'utf8').trim();
+        if (content.startsWith('ref: refs/heads/')) {
+          branchName = content.replace('ref: refs/heads/', '').trim();
+        } else if (content.startsWith('ref: ')) {
+          branchName = content.slice(5).trim();
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const activitySeries = computeActivitySeries(commits, diffs, 7);
+
   return {
     repository: repoPath,
+    branch: branchName || 'main',
     commitCount,
     contributorCount,
     fileCount,
     overallRisk,
     riskScore,
+    activitySeries,
     knowledgeConcentration: {
       topCommitter,
       topCommitterShare: Math.round(topCommitterShare * 10) / 10,
@@ -132,4 +155,57 @@ function computeOverview(repoPath, commits, diffs, threshold = 80) {
   };
 }
 
-module.exports = { computeOverview };
+/**
+ * Partition commit history into discrete intervals to generate activity and churn time-series.
+ * @param {Array} commits
+ * @param {Map<string, { added, modified, deleted }>} diffs
+ * @param {number} intervals
+ */
+function computeActivitySeries(commits, diffs, intervals = 7) {
+  if (!Array.isArray(commits) || commits.length < 2) {
+    return null;
+  }
+
+  const timestamps = commits.map((c) => c.author?.timestamp || 0).filter((t) => t > 0);
+  if (timestamps.length < 2) {
+    return null;
+  }
+
+  const newest = Math.max(...timestamps);
+  const oldest = Math.min(...timestamps);
+
+  if (newest <= oldest) {
+    return null;
+  }
+
+  const duration = newest - oldest;
+  const bucketDuration = duration / intervals;
+
+  const commitBuckets = new Array(intervals).fill(0);
+  const churnBuckets = new Array(intervals).fill(0);
+
+  for (const commit of commits) {
+    const t = commit.author?.timestamp || 0;
+    if (t < oldest) continue;
+    let idx = Math.floor((t - oldest) / bucketDuration);
+    if (idx >= intervals) idx = intervals - 1;
+
+    commitBuckets[idx] += 1;
+
+    if (diffs && diffs.has(commit.hash)) {
+      const diff = diffs.get(commit.hash);
+      const touches = (diff.added?.length || 0) + (diff.modified?.length || 0) + (diff.deleted?.length || 0);
+      churnBuckets[idx] += touches;
+    }
+  }
+
+  return {
+    intervals,
+    commitActivity: commitBuckets,
+    fileChurn: churnBuckets,
+    oldestTimestamp: oldest,
+    newestTimestamp: newest,
+  };
+}
+
+module.exports = { computeOverview, computeActivitySeries };

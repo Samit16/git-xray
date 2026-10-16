@@ -12,12 +12,15 @@ const {
   truncate,
   BOX,
   BADGES,
+  formatSeverity,
+  renderSparkline,
   renderBar,
 } = require('../ui/core.js');
 const { renderLogo } = require('../ui/logo.js');
 const {
   renderPanel,
   renderExecutiveCard,
+  renderMetricGrid,
   renderTable,
   renderSection,
 } = require('../ui/components.js');
@@ -105,31 +108,44 @@ function renderOverviewReport(overview) {
   lines.push(renderLogo({ showSubtitle: true }));
   lines.push('');
 
-  // 2. Repository Health Summary
+  // 2. Repository Intelligence & Health Summary Card
   const riskColor = overview.overallRisk === 'CRITICAL' ? 'red' : overview.overallRisk === 'HIGH' ? 'yellow' : overview.overallRisk === 'MEDIUM' ? 'cyan' : 'green';
-  const riskVerdict = overview.overallRisk === 'CRITICAL'
-    ? 'CRITICAL RISK — Multiple severe fragility bottlenecks detected'
-    : overview.overallRisk === 'HIGH'
-    ? 'HIGH RISK — Notable knowledge concentration and churn hotspots'
-    : overview.overallRisk === 'MEDIUM'
-    ? 'MODERATE RISK — Minor hotspots present, overall healthy'
-    : 'HEALTHY — Codebase risks are within safe engineering margins';
 
-  const summaryBox = renderExecutiveCard({
-    title: 'Repository Health Summary',
+  const intelligenceCard = renderMetricGrid({
+    title: 'REPOSITORY INTELLIGENCE',
     repoPath: overview.repository,
+    branch: overview.branch || 'main',
+    subtitle: `Git X-Ray Repository Health Summary: ${formatSeverity(overview.overallRisk)} (${overview.riskScore} / 100)`,
     metrics: [
-      { label: 'Risk Score', value: `${overview.riskScore} / 100 (${overview.overallRisk})`, color: riskColor },
-      { label: 'Total Commits', value: overview.commitCount },
-      { label: 'Contributors', value: overview.contributorCount },
-      { label: 'Tracked Files', value: overview.fileCount },
+      { label: 'Files', value: overview.fileCount?.toLocaleString() || '0' },
+      { label: 'Contributors', value: overview.contributorCount?.toLocaleString() || '0' },
+      { label: 'Risk Score', value: `${overview.riskScore} / 100 [${overview.overallRisk}]`, color: riskColor },
+      { label: 'Hotspots', value: String(overview.topHotspots?.length || 0) },
+      { label: 'Bus Factor = 1', value: `${overview.busFactorAlerts?.atRiskCount || 0} file(s)`, color: overview.busFactorAlerts?.atRiskCount > 0 ? 'red' : 'green', desc: `${overview.busFactorAlerts?.percentage || 0}%` },
+      { label: 'Dominance', value: `${overview.knowledgeConcentration?.avgMaxOwnership || 0}%`, desc: 'avg max' },
     ],
-    status: overview.overallRisk === 'LOW' ? 'Healthy' : overview.overallRisk === 'MEDIUM' ? 'Moderate' : 'Risk Alert',
   });
-  lines.push(summaryBox);
+  lines.push(intelligenceCard);
   lines.push('');
 
-  // 3. Key Findings
+  // 3. Activity Sparklines
+  lines.push(renderSection('Repository Activity (Trends across history)', '📈'));
+  if (overview.activitySeries) {
+    const s = overview.activitySeries;
+    const commitSpark = renderSparkline(s.commitActivity, { color: 'cyan' });
+    const churnSpark = renderSparkline(s.fileChurn, { color: 'yellow' });
+    const oldestDate = formatDate(s.oldestTimestamp);
+    const newestDate = formatDate(s.newestTimestamp);
+
+    lines.push(`  ${padRight(style('dim', 'Recent commit activity:'), 26)} ${commitSpark}`);
+    lines.push(`  ${padRight(style('dim', 'File churn:'), 26)} ${churnSpark}`);
+    lines.push(`  ${style('dim', `Period: Last ${s.intervals} available intervals (${oldestDate} to ${newestDate})`)}`);
+  } else {
+    lines.push(`  ${style('dim', 'Insufficient history for activity trends (requires >= 2 commits across distinct intervals).')}`);
+  }
+  lines.push('');
+
+  // 4. Key Findings
   lines.push(renderSection('Key Findings & Risk Diagnosis', '🔍'));
   const kc = overview.knowledgeConcentration;
   const bfa = overview.busFactorAlerts;
@@ -141,28 +157,31 @@ function renderOverviewReport(overview) {
     lines.push(`  ${style('green', '✓')} No critical-risk file hotspots detected.`);
   }
 
-  if (bfa.atRiskCount > 0) {
+  if (bfa && bfa.atRiskCount > 0) {
     lines.push(`  ${style('bold', style('red', '✗'))} ${style('bold', `${bfa.atRiskCount} file(s)`)} have Bus Factor = 1 (${bfa.percentage}% of repository > ${bfa.threshold}% single-author ownership).`);
   } else {
     lines.push(`  ${style('green', '✓')} Knowledge is shared evenly across team members.`);
   }
 
-  if (kc.topCommitterShare >= 50) {
+  if (kc && kc.topCommitterShare >= 50) {
     lines.push(`  ${style('bold', style('yellow', '⚠'))} Top contributor ${style('bold', kc.topCommitter)} authored ${style('bold', `${kc.topCommitterShare}%`)} of all commits.`);
   }
 
-  lines.push(`  ${style('dim', '•')} Average primary-author dominance across codebase: ${style('bold', `${kc.avgMaxOwnership}%`)}.`);
+  if (kc) {
+    lines.push(`  ${style('dim', '•')} Average primary-author dominance across codebase: ${style('bold', `${kc.avgMaxOwnership}%`)}.`);
+  }
+  lines.push(`  ${style('dim', '• Note: Historical commit concentration reflects measured touch frequency, not definitive organizational failure.')}`);
   lines.push('');
 
-  // 4. Most At-Risk Files Table
+  // 5. Most At-Risk Files Table
   lines.push(renderSection('Where Is The Risk? (Top At-Risk Files)', '⚡'));
   if (overview.topHotspots && overview.topHotspots.length > 0) {
     const hsHeaders = ['Risk Score', 'Severity', 'File', 'Activity Profile', 'Why Is This Risky?'];
     const hsRows = overview.topHotspots.map((h) => {
-      const sevColor = h.severity === 'CRITICAL' ? 'red' : h.severity === 'HIGH' ? 'yellow' : h.severity === 'MEDIUM' ? 'cyan' : 'green';
+      const formattedSev = formatSeverity(h.severity);
       return [
         style('bold', `${h.riskScore}/100`),
-        style('bold', style(sevColor, h.severity)),
+        formattedSev,
         h.file,
         `${h.churn} touches · ${h.ownershipConcentration}% dominance`,
         h.primaryRisk,
@@ -176,7 +195,7 @@ function renderOverviewReport(overview) {
   }
   lines.push('');
 
-  // 5. What To Investigate Next
+  // 6. What To Investigate Next
   lines.push(renderSection('Recommended Next Investigation', '💡'));
   lines.push(`  ${style('cyan', '→')} Run ${style('bold', 'Where Is The Risk?')} (or ${style('dim', 'gitxray . hotspots')}) for complete risk rankings.`);
   lines.push(`  ${style('cyan', '→')} Run ${style('bold', 'Who Owns The Knowledge?')} (or ${style('dim', 'gitxray . bus-factor')}) to audit single-person dependencies.`);
@@ -362,7 +381,7 @@ function renderKnowledgeReport(busFactorData, threshold, repoPath) {
  * @param {string} repoPath
  * @returns {string}
  */
-function renderChurnReport(churnData, commitCount, repoPath) {
+function renderChurnReport(churnData, commitCount, repoPath, activitySeries = null) {
   const lines = [];
 
   lines.push(renderDashboardSummary({
@@ -374,6 +393,12 @@ function renderChurnReport(churnData, commitCount, repoPath) {
     ],
     status: 'Live',
   }));
+
+  if (activitySeries) {
+    const churnSpark = renderSparkline(activitySeries.fileChurn, { color: 'yellow' });
+    lines.push('');
+    lines.push(` ${style('dim', 'Repository churn trend:')}  ${churnSpark}  ${style('dim', `(last ${activitySeries.intervals} intervals)`)}`);
+  }
 
   lines.push('');
   lines.push(` ${style('dim', 'What this measures:')} Tracks files with the most frequent revisions over time.`);
